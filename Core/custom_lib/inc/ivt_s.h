@@ -4,20 +4,23 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "bms_safety_config.h"
+#include "config/bms_sensor_config.h"
+#include "config/bms_bus_config.h"
 
-#define IVTS_CURRENT_ID       0x521U
-#define IVTS_U1_ID            0x522U
-#define IVTS_RESPONSE_ID      0x511U
-#define IVTS_DEFAULT_BITRATE  500000U
+#define IVTS_CURRENT_ID       CFG_IVT_ID_RESULT_I
+#define IVTS_U1_ID            CFG_IVT_ID_RESULT_U1
+#define IVTS_U2_ID            CFG_IVT_ID_RESULT_U2
+#define IVTS_ENERGY_ID        CFG_IVT_ID_RESULT_WH
+#define IVTS_RESPONSE_ID      CFG_IVT_ID_RESPONSE
+#define IVTS_DEFAULT_BITRATE  CFG_CAN2_BITRATE
 #ifndef IVTS_CAN_BITRATE
 #define IVTS_CAN_BITRATE IVTS_DEFAULT_BITRATE
 #endif
 
 /* Application watchdog choices, not datasheet requirements. Independently
  * configurable; U1 might be disabled and is never assumed to be transmitting. */
-#define IVTS_CURRENT_TIMEOUT_MS BMS_IVT_CURRENT_TIMEOUT_MS
-#define IVTS_U1_TIMEOUT_MS      BMS_IVT_U1_TIMEOUT_MS
+#define IVTS_CURRENT_TIMEOUT_MS CFG_IVT_CURRENT_TIMEOUT_MS
+#define IVTS_U1_TIMEOUT_MS      CFG_IVT_VOLTAGE_TIMEOUT_MS
 
 #define IVTS_STATE_OCS              (1U << 0)
 #define IVTS_STATE_RESULT_ERROR     (1U << 1)
@@ -28,6 +31,8 @@
 typedef struct {
     uint16_t current_id, u1_id, response_id;
     uint32_t current_timeout_ms, u1_timeout_ms;
+    uint16_t u2_id, energy_id;
+    uint32_t u2_timeout_ms, energy_timeout_ms;
 } IVTS_Config;
 
 typedef struct {
@@ -62,11 +67,12 @@ typedef struct {
 } IVTS_Response;
 
 typedef struct {
-    IVTS_Result current, u1;
+    IVTS_Result current, u1, u2, energy;
     IVTS_Alive alive;
     IVTS_Response response; /* Extension point for GET/configuration verification. */
     bool configuration_verified; /* Never inferred from Alive or result traffic. */
     bool transport_error;
+    uint32_t restart_epoch;
 } IVTS_Snapshot;
 
 typedef struct {
@@ -75,7 +81,7 @@ typedef struct {
 } IVTS_Driver;
 
 typedef enum {
-    IVTS_IGNORED, IVTS_REJECTED, IVTS_CURRENT, IVTS_U1, IVTS_ALIVE, IVTS_RESPONSE
+    IVTS_IGNORED, IVTS_REJECTED, IVTS_CURRENT, IVTS_U1, IVTS_ALIVE, IVTS_RESPONSE, IVTS_U2, IVTS_ENERGY
 } IVTS_RxEvent;
 
 IVTS_Config IVTS_DefaultConfig(void);

@@ -1,0 +1,21 @@
+CAN ID,ID Type,Rate (Hz),Bit Position,Bit Length,Byte Order,Signed,Frame Name,Channel,Units,Type,Conversion,Min,Max,Source,Node,Destination,Notes
+0x521,Standard,250,0,8,Little,no,IVT_Msg_Result_I,IVT_I_MuxID,,uint8,y = x,0,255,IVT,n/a,BMS,
+0x521,Standard,250,8,4,Little,no,IVT_Msg_Result_I,IVT_I_Counter,,uint4,y = x,0,15,IVT,n/a,BMS,
+0x521,Standard,250,12,4,Little,no,IVT_Msg_Result_I,IVT_I_Status,,uint4,y = x,0,15,IVT,n/a,BMS,"bit0 OCS, bit1 result error/out of range, bit2 any result error, bit3 system error"
+0x521,Standard,250,23,32,Big,yes,IVT_Msg_Result_I,IVT_I,A,int32,y = 0.001x,-2.14748e+06,2.14748e+06,IVT,n/a,BMS,
+0x522,Standard,250,0,8,Little,no,IVT_Msg_Result_U1,IVT_U1_MuxID,,uint8,y = x,0,255,IVT,n/a,BMS,
+0x522,Standard,250,8,4,Little,no,IVT_Msg_Result_U1,IVT_U1_Counter,,uint4,y = x,0,15,IVT,n/a,BMS,
+0x522,Standard,250,12,4,Little,no,IVT_Msg_Result_U1,IVT_U1_Status,,uint4,y = x,0,15,IVT,n/a,BMS,"bit0 OCS, bit1 result error/out of range, bit2 any result error, bit3 system error"
+0x522,Standard,250,23,32,Big,yes,IVT_Msg_Result_U1,IVT_U1,V,int32,y = 0.001x,-2.14748e+06,2.14748e+06,IVT,n/a,BMS,
+0x523,Standard,250,0,8,Little,no,IVT_Msg_Result_U2,IVT_U2_MuxID,,uint8,y = x,0,255,IVT,n/a,BMS,
+0x523,Standard,250,8,4,Little,no,IVT_Msg_Result_U2,IVT_U2_Counter,,uint4,y = x,0,15,IVT,n/a,BMS,
+0x523,Standard,250,12,4,Little,no,IVT_Msg_Result_U2,IVT_U2_Status,,uint4,y = x,0,15,IVT,n/a,BMS,"bit0 OCS, bit1 result error/out of range, bit2 any result error, bit3 system error"
+0x523,Standard,250,23,32,Big,yes,IVT_Msg_Result_U2,IVT_U2,V,int32,y = 0.001x,-2.14748e+06,2.14748e+06,IVT,n/a,BMS,
+0x528,Standard,10,0,8,Little,no,IVT_Msg_Result_Wh,IVT_Wh_MuxID,,uint8,y = x,0,255,IVT,n/a,BMS,
+0x528,Standard,10,8,4,Little,no,IVT_Msg_Result_Wh,IVT_Wh_Counter,,uint4,y = x,0,15,IVT,n/a,BMS,
+0x528,Standard,10,12,4,Little,no,IVT_Msg_Result_Wh,IVT_Wh_Status,,uint4,y = x,0,15,IVT,n/a,BMS,"bit0 OCS, bit1 result error/out of range, bit2 any result error, bit3 system error"
+0x528,Standard,10,23,32,Big,yes,IVT_Msg_Result_Wh,IVT_Wh,Wh,int32,y = x,-2.14748e+09,2.14748e+09,IVT,n/a,BMS,
+0x411,Standard,event,0,8,Little,no,IVT_Msg_Command,IVT_Command_ID,,uint8,y = x,0,255,BMS,n/a,IVT,
+0x411,Standard,event,15,56,Big,no,IVT_Msg_Command,IVT_Command_Data,,uint56,y = x,0,7.20576e+16,BMS,n/a,IVT,
+0x511,Standard,event,0,8,Little,no,IVT_Msg_Response,IVT_Response_ID,,uint8,y = x,0,255,IVT,n/a,BMS,
+0x511,Standard,event,15,56,Big,no,IVT_Msg_Response,IVT_Response_Data,,uint56,y = x,0,7.20576e+16,IVT,n/a,BMS,

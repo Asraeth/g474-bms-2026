@@ -1,88 +1,141 @@
 /*
  * bms_can.c
  *
- *  Created on: Jun 8, 2025
- *      Author: amrlxyz
+ *  CAN1 (hfdcan1): car / datalogger bus (with the inverter). BMS data out, TS request and settings in.
+ *  CAN2 (hfdcan2): inside the TSAC: IVT-S current sensor.
+ *  CAN3 (hfdcan3): charger.
+ *
+ * All callers (timer, CAN and safety interrupts) share interrupt priority 0, so they never interrupt each other.
  */
 
 #include "bms_can.h"
+#include "bms_ivt.h"
+#include "bms_precharge.h"
+#include "bms_settings.h"
+#include "bms_charger.h"
+#include "bms_charger_codec.h"
+#include "bms_health.h"
+#include "bms_libWrapper.h"
 #include "uartDMA.h"
 #include <string.h>
 #include <stdbool.h>
 
-FDCAN_TxHeaderTypeDef TxHeader;
+// CAN1 measurement burst being sent
+static CanTxMsg          txBuffer[CAN_BUFFER_LEN];
+static volatile uint32_t txBufferHeadIndex = 0;
+static volatile uint32_t txBufferTailIndex = 0;
+static volatile bool     isBufferTransmitting = false;
 
-CanTxMsg txBuffer[CAN_BUFFER_LEN];
-volatile uint32_t txBufferHeadIndex = 0;
-volatile uint32_t txBufferTailIndex = 0;
-volatile bool isBufferTransmitting = false;
+// Counters for the debugger and the tests
+volatile uint32_t canTxErrorCount = 0;
+volatile uint32_t canFastTxDropped = 0;
+volatile uint32_t canChargerTxDropped = 0;
+volatile uint32_t canBusOffCount = 0;
 
-static IVTS_Driver ivtSensor;
+#define CAN_TX_FIFO_DEPTH 3
 
-void BMS_CAN_GetIVTSnapshot(IVTS_Snapshot *snapshot)
+_Static_assert(CAN_FAST_FRAME_COUNT < CAN_TX_FIFO_DEPTH, "No TX buffer left for the measurement burst");
+
+
+static void configFilters(void)
 {
-    // RX IRQ is the writer. Copy and evaluate time under one short critical
-    // section; preserve PRIMASK when called from the periodic timer ISR.
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    IVTS_GetSnapshot(&ivtSensor, HAL_GetTick(), snapshot);
-    __set_PRIMASK(primask);
-}
-
-static void configure_ivt_can(void)
-{
-    IVTS_Config config = IVTS_DefaultConfig();
-    if (!IVTS_Init(&ivtSensor, &config)) Error_Handler();
     FDCAN_FilterTypeDef filter = {0};
-    filter.IdType = FDCAN_STANDARD_ID;
-    filter.FilterType = FDCAN_FILTER_DUAL;
+
+    // CAN3: only the charger status frame
+    filter.IdType       = FDCAN_EXTENDED_ID;
+    filter.FilterIndex  = 0;
+    filter.FilterType   = FDCAN_FILTER_MASK;
     filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    filter.FilterIndex = 0;
-    filter.FilterID1 = config.current_id;
-    filter.FilterID2 = config.u1_id;
-    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK) Error_Handler();
-    filter.FilterIndex = 1;
-    filter.FilterID1 = filter.FilterID2 = config.response_id;
-    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK) Error_Handler();
-    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, FDCAN_REJECT, FDCAN_REJECT,
-            FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK) Error_Handler();
-    if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK) Error_Handler();
-    if (HAL_FDCAN_ActivateNotification(&hfdcan2,
-            FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST | FDCAN_IT_BUS_OFF, 0) != HAL_OK)
+    filter.FilterID1    = 0x01000000;
+    filter.FilterID2    = 0x1C000000;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan3, &filter) != HAL_OK)
+    {
         Error_Handler();
+    }
+
+    // CAN1: only the TS request from the VCU and settings requests from the GUI
+    filter.IdType       = CFG_CAN_TS_REQUEST_EXTENDED ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
+    filter.FilterIndex  = 0;
+    filter.FilterType   = FDCAN_FILTER_MASK;
+    filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    filter.FilterID1    = CFG_CAN_ID_TS_REQUEST;
+    filter.FilterID2    = CFG_CAN_TS_REQUEST_EXTENDED ? 0x1FFFFFFF : 0x7FF;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &filter) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    filter.IdType       = FDCAN_EXTENDED_ID;
+    filter.FilterIndex  = CFG_CAN_TS_REQUEST_EXTENDED ? 1 : 0;
+    filter.FilterID1    = CFG_CAN_ID_CONFIG_REQUEST;
+    filter.FilterID2    = 0x1FFFFFFF;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &filter) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    // CAN2: the IVT sends I, U1 and U2 back to back every few ms. I and U1 go to RX FIFO 0, U2 and
+    // the energy counter to FIFO 1, so each 3-frame FIFO has room for more than one cycle.
+    filter.IdType       = FDCAN_STANDARD_ID;
+    filter.FilterIndex  = 0;
+    filter.FilterType   = FDCAN_FILTER_RANGE;
+    filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    filter.FilterID1    = CFG_IVT_ID_RESULT_I;
+    filter.FilterID2    = CFG_IVT_ID_RESULT_U1;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    filter.FilterIndex  = 1;
+    filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+    filter.FilterID1    = CFG_IVT_ID_RESULT_U2;
+    filter.FilterID2    = CFG_IVT_ID_RESULT_WH;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    // The IVT's responses, for its alive message after a (re)start
+    filter.FilterIndex  = 2;
+    filter.FilterType   = FDCAN_FILTER_MASK;
+    filter.FilterID1    = CFG_IVT_ID_RESPONSE;
+    filter.FilterID2    = 0x7FF;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    // Reject everything else, including remote frames
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan3, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 
 void BMS_CAN_Config(void)
 {
-    // Both controllers use PCLK1 / 2 = 64 MHz. Do not silently change the
-    // vehicle bus timing if the board clock configuration is regenerated.
-    if (HAL_RCC_GetPCLK1Freq() != 128000000U) Error_Handler();
-    configure_ivt_can();
-//  FDCAN_FilterTypeDef sFilterConfig;
-//
-//  /* Configure Rx filter */
-//  sFilterConfig.IdType = FDCAN_STANDARD_ID;
-//  sFilterConfig.FilterIndex = 0;
-//  sFilterConfig.FilterType = FDCAN_FILTER_MASK;
-//  sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-//  sFilterConfig.FilterID1 = 0x321;
-//  sFilterConfig.FilterID2 = 0x7FF;
-//  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /* Configure global filter:
-//     Filter all remote frames with STD and EXT ID
-//     Reject non matching frames with STD ID and EXT ID */
-//    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK)
-//    {
-//        Error_Handler();
-//    }
+    configFilters();
 
-    /* Start the FDCAN module */
+    /* Start the FDCAN modules */
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_FDCAN_Start(&hfdcan3) != HAL_OK)
     {
         Error_Handler();
     }
@@ -96,80 +149,121 @@ void BMS_CAN_Config(void)
     {
         Error_Handler();
     }
-
+    if (HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO1_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST | FDCAN_IT_RX_FIFO1_MESSAGE_LOST, 0) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_FDCAN_ActivateNotification(&hfdcan3, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 
-void static recursiveTransmit(void)
+static void BMS_CAN_SendMsg(const CanTxMsg* msg);
+
+
+// The burst only ever holds one TX buffer, so the fast frames always find room and wait at most one
+// burst frame (~160 us). The next burst frame is loaded when the TX FIFO runs empty.
+static void recursiveTransmit(void)
 {
-    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1))
+    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > CAN_FAST_FRAME_COUNT)
     {
         if (txBufferTailIndex >= txBufferHeadIndex)
         {
             return;
         }
 
-        CanTxMsg msg = txBuffer[txBufferTailIndex];
-        BMS_CAN_SendMsg(msg);
+        BMS_CAN_SendMsg(&txBuffer[txBufferTailIndex]);
 
         txBufferTailIndex++;
     }
 }
 
 
-void BMS_CAN_Test(void)
+static void BMS_CAN_SendMsg(const CanTxMsg* msg)
 {
-    /* Prepare Tx Header */
-    TxHeader.Identifier = 0xFF;
-    TxHeader.IdType = FDCAN_EXTENDED_ID;
-    TxHeader.TxFrameType = FDCAN_DATA_FRAME;
-    TxHeader.DataLength = 8;
-    TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-    TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-    TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-    TxHeader.MessageMarker = 0;
-
-    const uint32_t TOTAL_MSG_ID = TOTAL_PACK_CELLS;
-    uint8_t TxData[8] = {0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF};
-    static int16_t test_voltage = 3.7 * 1000;
-    static int16_t test_temp    = 25 * 100;
-    static bool    test_isDicharging = false;
-    static bool    test_isFaultDetected = false;
-
-    test_isDicharging    = !test_isDicharging;
-    test_isFaultDetected = !test_isFaultDetected;
-
-    isBufferTransmitting = false;       // Disable recursive callback in case some are still being sent
-
-    /* Start the Transmission process */
-    for (int i = 0; i < TOTAL_MSG_ID; i++)
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &msg->header, (uint8_t*)msg->data) != HAL_OK)
     {
-        TxData[0] = (uint8_t)(test_voltage & 0xFF);
-        TxData[1] = (uint8_t)((test_voltage >> 8) & 0xFF);
-        TxData[2] = (uint8_t)(test_temp & 0xFF);
-        TxData[3] = (uint8_t)((test_temp >> 8) & 0xFF);
-        TxData[4] = (uint8_t)((test_isDicharging << 0) | (test_isFaultDetected << 1));
-
-        memcpy(txBuffer[i].data, TxData, 8);
-        TxHeader.Identifier = BASE_CAN_ID + i;
-        txBuffer[i].header = TxHeader;
+        canTxErrorCount++;      // Not fatal: receivers detect missing BMS frames themselves
     }
-
-    txBufferHeadIndex = TOTAL_MSG_ID;
-    txBufferTailIndex = 0;
-    isBufferTransmitting = true;
-
-    recursiveTransmit();
 }
 
 
-void BMS_CAN_SendMsg(CanTxMsg msg)
+void BMS_CAN_SendFast(const CanTxMsg* msgs, uint32_t count)
 {
-    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &msg.header, msg.data) != HAL_OK)
+    for (uint32_t i = 0; i < count; i++)
     {
-        /* Transmission request Error */
-        Error_Handler();
+        if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &msgs[i].header, (uint8_t*)msgs[i].data) != HAL_OK)
+        {
+            canFastTxDropped++;     // Bus off or nobody acknowledging: the buffers are still full
+        }
+    }
+}
+
+
+// Charger command on CAN3. With no charger connected nothing acknowledges it, the TX FIFO stays full
+// and the frames are just counted.
+void BMS_CAN_SendCharger(const CanTxMsg* msg)
+{
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &msg->header, (uint8_t*)msg->data) != HAL_OK)
+    {
+        canChargerTxDropped++;
+    }
+}
+
+
+void BMS_CAN_SendIvtCommand(uint32_t id, const uint8_t data[8])
+{
+    FDCAN_TxHeaderTypeDef header = {0};
+    header.Identifier          = id;
+    header.IdType              = FDCAN_STANDARD_ID;
+    header.TxFrameType         = FDCAN_DATA_FRAME;
+    header.DataLength          = FDCAN_DLC_BYTES_8;
+    header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    header.BitRateSwitch       = FDCAN_BRS_OFF;
+    header.FDFormat            = FDCAN_CLASSIC_CAN;
+    header.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    header.MessageMarker       = 0;
+
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &header, (uint8_t*)data) != HAL_OK)
+    {
+        canTxErrorCount++;
+    }
+}
+
+
+// True once everything sent to the IVT has been acknowledged on the bus
+bool BMS_CAN_IsIvtTxIdle(void)
+{
+    return HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan2) == CAN_TX_FIFO_DEPTH;
+}
+
+
+// Drops IVT commands nobody acknowledged, so they aren't delivered late when the IVT reappears
+void BMS_CAN_AbortIvtTx(void)
+{
+    HAL_FDCAN_AbortTxRequest(&hfdcan2, FDCAN_TX_BUFFER0 | FDCAN_TX_BUFFER1 | FDCAN_TX_BUFFER2);
+}
+
+
+// The FDCAN stays in bus-off (INIT set) until software restarts it. Called from the safety tick.
+void BMS_CAN_RecoverBusOff(void)
+{
+    FDCAN_HandleTypeDef* handles[] = { &hfdcan1, &hfdcan2, &hfdcan3 };
+
+    for (int i = 0; i < 3; i++)
+    {
+        FDCAN_GlobalTypeDef* can = handles[i]->Instance;
+        if(i==0 && !(can->PSR & FDCAN_PSR_BO))BMS_Health_ClearRecovered(BMS_ERR_CAN);
+        if ((can->PSR & FDCAN_PSR_BO) && (can->CCCR & FDCAN_CCCR_INIT))
+        {
+            if(i==1)BMS_IVT_InvalidateTransport();
+            if(i==0)BMS_Health_Latch(BMS_ERR_CAN);
+            if(i==2 && BMS_IsCharging())BMS_Health_Latch(BMS_ERR_CHARGER);
+            CLEAR_BIT(can->CCCR, FDCAN_CCCR_INIT);
+            canBusOffCount++;
+        }
     }
 }
 
@@ -191,7 +285,7 @@ void HAL_FDCAN_TxFifoEmptyCallback(FDCAN_HandleTypeDef *hfdcan)
 }
 
 
-void static CAN_AbortTx()
+static void CAN_AbortTx(void)
 {
     HAL_FDCAN_AbortTxRequest(&hfdcan1, FDCAN_TX_BUFFER0);
     HAL_FDCAN_AbortTxRequest(&hfdcan1, FDCAN_TX_BUFFER1);
@@ -208,11 +302,21 @@ void BMS_CAN_SendBuffer(CanTxMsg* msgArr, uint32_t len)
         return;
     }
 
+    // Logged when the bursts stop getting out and when they get out again, not every period
+    static uint32_t overwritten = 0;
     if (isBufferTransmitting)
     {
         isBufferTransmitting = false;       // Disable recursive callback in case some are still being sent
         CAN_AbortTx();
-        printfDma("Error: CAN TX Buffer Overwritten \n");
+        if (overwritten++ == 0)
+        {
+            printfDma("Error: CAN TX Buffer Overwritten (CAN1 burst not getting out: nothing acknowledging?)\n");
+        }
+    }
+    else if (overwritten > 0)
+    {
+        printfDma("CAN1 bursts getting out again (%lu overwritten)\n", (unsigned long)overwritten);
+        overwritten = 0;
     }
 
     memcpy(txBuffer, msgArr, len * sizeof(CanTxMsg));
@@ -225,117 +329,74 @@ void BMS_CAN_SendBuffer(CanTxMsg* msgArr, uint32_t len)
 
 ChargerStatus chargerStatus = {0};
 
-/**
- * @brief Parses a CAN message received from the charger.
- *
- * This function decodes the data payload of a CAN message with the
- * charger's status ID and populates a ChargerStatus struct.
- * The data mapping is based on a common protocol:
- * - Bytes 0-1: Output Voltage (0.1V/bit, little-endian)
- * - Bytes 2-3: Output Current (0.1A/bit, little-endian)
- * - Byte 5: Status flags
- *
- * @param data can message data.
- */
-void static parse_charger_status(uint8_t* data)
-{
-    // Unpack the data from the byte array.
-    // Voltage (2 bytes, little-endian, 0.1V resolution)
-    float raw_voltage = (data[0] << 8) | data[1];
-    chargerStatus.output_voltage = raw_voltage / 10;
-
-    // Current (2 bytes, little-endian, 0.1A resolution)
-    float raw_current = (data[2] << 8) | data[3];
-    chargerStatus.output_current = raw_current / 10;
-
-    // Status Flags (1 byte)
-    chargerStatus.hardware_fault        = (data[4] >> 0) & 0x01;
-    chargerStatus.over_temp_fault       = (data[4] >> 1) & 0x01;
-    chargerStatus.input_voltage_fault   = (data[4] >> 2) & 0x01;
-    chargerStatus.charging_state        = (data[4] >> 3) & 0x01;
-
-    return;
+/* Legacy Elcon frames deliberately removed. Current gateway BCD codec only. */
+void BMS_CAN_GetChargerMsg(const ChargerConfiguration* config,uint8_t *data) {
+ if(!BMS_Charger_Encode(config->target_voltage,config->disable_charging ? 0 : config->max_current,data)) {
+  memset(data,0,8);BMS_Health_Latch(BMS_ERR_CHARGER);
+ }
 }
 
-/**
- * @brief Transmits a configuration message to the charger.
- *
- * This function takes charging parameters, packs them into a CAN message
- * payload, and sends it using the defined charger configuration ID.
- * The data mapping is based on a common protocol:
- * - Bytes 0-1: Target Voltage (0.1V/bit, little-endian)
- * - Bytes 2-3: Max Current (0.1A/bit, little-endian)
- * - Byte 4: Charging Enable (0x00 = Disable, 0x01 = Enable)
- */
-void BMS_CAN_GetChargerMsg(const ChargerConfiguration* config, uint8_t* data)
+// Each RX FIFO only holds 3 frames, so it is emptied completely on every interrupt
+static void drainRxFifo(FDCAN_HandleTypeDef *hfdcan, uint32_t fifo)
 {
-    // Pack Target Voltage (0.1V resolution)
-    uint16_t raw_voltage = (uint16_t)(config->target_voltage * 10);
-    data[0] = (uint8_t)((raw_voltage >> 8) & 0xFF);
-    data[1] = (uint8_t)((raw_voltage >> 0) & 0xFF);
+    FDCAN_RxHeaderTypeDef rxHeader;
+    uint8_t rxData[64];     // HAL_FDCAN_GetRxMessage copies DLCtoBytes[DLC] bytes: up to 64, also for classic frames
 
-    // Pack Max Current (0.1A resolution)
-    uint16_t raw_current = (uint16_t)(config->max_current * 10);
-    data[2] = (uint8_t)((raw_current >> 8) & 0xFF);
-    data[3] = (uint8_t)((raw_current >> 0) & 0xFF);
+    while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, fifo) > 0)
+    {
+        if (HAL_FDCAN_GetRxMessage(hfdcan, fifo, &rxHeader, rxData) != HAL_OK)
+        {
+            if(hfdcan==&hfdcan2)BMS_IVT_InvalidateTransport();
+            BMS_Health_Latch(BMS_ERR_CAN);
+            break;
+        }
+        if(rxHeader.RxFrameType!=FDCAN_DATA_FRAME || rxHeader.FDFormat!=FDCAN_CLASSIC_CAN || rxHeader.DataLength>8)continue;
+        // Classic CAN: DLC 9..15 means 8 data bytes (ISO 11898-1); the bytes past them aren't from this frame
+        uint32_t length = rxHeader.DataLength > 8 ? 8 : rxHeader.DataLength;
 
-    // Pack Charging Enable flag
-    data[4] = config->disable_charging ? 0x01 : 0x00;
-
-    // Bytes 5, 6, 7 are unused but sent as 0.
-    data[5] = 0x00;
-    data[6] = 0x00;
-    data[7] = 0x00;
-
-    // Send the message over the CAN bus.
-    return;
+        if (hfdcan == &hfdcan1)
+        {
+            if (rxHeader.Identifier == CFG_CAN_ID_TS_REQUEST && length == 8 &&
+                (rxHeader.IdType == FDCAN_EXTENDED_ID) == (CFG_CAN_TS_REQUEST_EXTENDED != 0))
+            {
+                BMS_Precharge_HandleRequest(rxData[0] == 1);
+            }
+            else if (rxHeader.Identifier == CFG_CAN_ID_CONFIG_REQUEST && rxHeader.IdType == FDCAN_EXTENDED_ID &&
+                     length == 8)
+            {
+                BMS_Settings_HandleRequest(rxData, length);
+            }
+        }
+        else if (hfdcan == &hfdcan3)
+        {
+            if(rxHeader.IdType==FDCAN_EXTENDED_ID)BMS_Charger_HandleFrame(rxHeader.Identifier,rxData,length);
+        }
+        else if (hfdcan == &hfdcan2)
+        {
+            if (rxHeader.IdType == FDCAN_STANDARD_ID)
+            {
+                BMS_IVT_HandleFrame(rxHeader.Identifier, rxData, length);   // Results and responses
+            }
+        }
+    }
 }
 
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-    if (hfdcan != &hfdcan1 && hfdcan != &hfdcan2) return;
-    if (hfdcan == &hfdcan2 && (RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST)) {
-        IVTS_InvalidateTransport(&ivtSensor);
-        // Discard queued frames from the loss episode. Only later traffic
-        // can restore channel validity.
-        while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0)) {
-            FDCAN_RxHeaderTypeDef droppedHeader;
-            uint8_t droppedData[64];
-            if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &droppedHeader, droppedData) != HAL_OK) break;
-        }
-        return;
-    }
-    if (!(RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE)) return;
-    while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0)) {
-        FDCAN_RxHeaderTypeDef header;
-        uint8_t data[64]; // HAL copies up to 64 bytes before format validation.
-        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &header, data) != HAL_OK) {
-            if (hfdcan == &hfdcan2) IVTS_InvalidateTransport(&ivtSensor);
-            break;
-        }
-        if (hfdcan == &hfdcan1) {
-            if (header.Identifier == CHARGER_STATUS_CAN_ID && header.IdType == FDCAN_EXTENDED_ID
-                    && header.RxFrameType == FDCAN_DATA_FRAME && header.FDFormat == FDCAN_CLASSIC_CAN
-                    && header.DataLength == FDCAN_DLC_BYTES_8) parse_charger_status(data);
-        } else {
-            IVTS_Frame frame = {.id = header.Identifier, .dlc = header.DataLength,
-                .extended = header.IdType != FDCAN_STANDARD_ID,
-                .remote = header.RxFrameType != FDCAN_DATA_FRAME,
-                .fd = header.FDFormat != FDCAN_CLASSIC_CAN};
-            memcpy(frame.data, data, sizeof(frame.data));
-            IVTS_Receive(&ivtSensor, &frame, HAL_GetTick());
-        }
+    if((RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) && hfdcan==&hfdcan2)BMS_IVT_InvalidateTransport();
+    if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE)
+    {
+        drainRxFifo(hfdcan, FDCAN_RX_FIFO0);
     }
 }
 
-void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t ErrorStatusITs)
+
+void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 {
-    if (hfdcan == &hfdcan2 && (ErrorStatusITs & FDCAN_IT_BUS_OFF))
-        IVTS_InvalidateTransport(&ivtSensor);
-    // No automatic controller/sensor reconfiguration on bus-off. Recovery
-    // requires a verified physical bus and a deliberate controller restart.
+    if((RxFifo1ITs & FDCAN_IT_RX_FIFO1_MESSAGE_LOST) && hfdcan==&hfdcan2)BMS_IVT_InvalidateTransport();
+    if (RxFifo1ITs & FDCAN_IT_RX_FIFO1_NEW_MESSAGE)
+    {
+        drainRxFifo(hfdcan, FDCAN_RX_FIFO1);
+    }
 }
-
-
-

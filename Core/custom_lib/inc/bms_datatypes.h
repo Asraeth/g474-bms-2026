@@ -1,142 +1,61 @@
 /*
  * bms_datatypes.h
  *
- *  Created on: Nov 24, 2024
- *      Author: amrlxyz
+ * ADBMS6830B register groups the firmware writes, as bitfield structs (6 bytes each, byte 0 first on the wire).
+ * Bitfield layout is up to the compiler: test/check_layout.sh checks the ARM and the PC compiler against the
+ * datasheet (Rev. 0) tables named below.
  */
 
 #pragma once
 
-#include "stdint.h"
+#include <stdint.h>
 
-/* ADBMS2950 CFGA Data structure*/
+
+// Configuration Register Group A (Table 55)
 typedef struct
 {
-  uint8_t       vs1       :2;
-  uint8_t       vs2       :2;
-  uint8_t       vs3       :1;
-  uint8_t       vs4       :1;
-  uint8_t       vs5       :1;
-  uint8_t       ocen      :1;
+    uint8_t     cth     :3;     // C-ADC vs S-ADC comparison threshold
+    uint8_t     unused1 :4;
+    uint8_t     refon   :1;     // Reference stays on between conversions (no 5 ms REF-UP before each one)
 
-  uint8_t       injosc    :2;
-  uint8_t       injmon    :2;
-  uint8_t       injts     :1;
-  uint8_t       unused1   :1;
-  uint8_t       injecc    :1;
-  uint8_t       injtm     :1;
+    uint8_t     flag_d  :8;     // Diagnostic flags to set (latent fault tests)
 
-  uint8_t       vs6       :1;
-  uint8_t       vs7       :1;
-  uint8_t       vs8       :1;
-  uint8_t       vs9       :1;
-  uint8_t       vs10      :1;
-  uint8_t       soak      :3;
+    uint8_t     unused2 :3;
+    uint8_t     owa     :3;     // Open wire soak time
+    uint8_t     owrng   :1;
+    uint8_t     soakon  :1;
 
-  uint8_t       gpo1c     :1;
-  uint8_t       gpo2c     :1;
-  uint8_t       gpo3c     :1;
-  uint8_t       gpo4c     :1;
-  uint8_t       gpo5c     :1;
-  uint8_t       gpo6c     :2;
-  uint8_t       unused2   :1;
+    uint8_t     gpo1to8 :8;     // GPIO pull-downs: 0 = on (output low), 1 = off (input / high)
 
-  uint8_t       gpo1od    :1;
-  uint8_t       gpo2od    :1;
-  uint8_t       gpo3od    :1;
-  uint8_t       gpo4od    :1;
-  uint8_t       gpo5od    :1;
-  uint8_t       gpo6od    :1;
-  uint8_t       gpio1fe   :1;
-  uint8_t       spi3w     :1;
+    uint8_t     gpo9to10:2;
+    uint8_t     unused3 :6;
 
-  uint8_t       acci      :3;
-  uint8_t       commbk    :1;
-  uint8_t       refup     :1;
-  uint8_t       snapst    :1;
-  uint8_t       vb1mux    :1;
-  uint8_t       vb2mux    :1;
-} ad29_cfa_t;
-
-/*!< ADBMS2950 Configuration Register Group B structure */
-typedef struct
-{
-  uint8_t   oc1th     :7;
-  uint8_t   unused1   :1;
-
-  uint8_t   oc2th     :7;
-  uint8_t   unused2   :1;
-
-  uint8_t   oc3th     :7;
-  uint8_t   unused3   :1;
-
-  uint8_t   ocdgt     :2;
-  uint8_t   unused4   :1;
-  uint8_t   ocdp      :1;
-  uint8_t   unused5   :4;
-
-  uint8_t   ocod      :1;
-  uint8_t   oc1gc     :1;
-  uint8_t   oc2gc     :1;
-  uint8_t   oc3gc     :1;
-  uint8_t   ocmode    :2;
-  uint8_t   ocax      :1;
-  uint8_t   ocbx      :1;
-
-  uint8_t       diagsel   :3;
-  uint8_t       gpio2eoc  :1;
-  uint8_t       gpio1c    :1;
-  uint8_t       gpio2c    :1;
-  uint8_t       gpio3c    :1;
-  uint8_t       gpio4c    :1;
-} ad29_cfb_t;
-
-
-/* For ADBMS6830 config register structure */
-typedef struct
-{
-  uint8_t       cth     :3;
-  uint8_t       unused1 :4;
-  uint8_t       refon   :1;
-
-  uint8_t       flag_d  :8;
-
-  uint8_t       unused2 :3;
-  uint8_t       owa     :3;
-  uint8_t       owrng   :1;
-  uint8_t       soakon  :1;
-
-  uint8_t       gpo1to8 :8;
-
-  uint8_t       gpo9to10:2;
-  uint8_t       unused3 :6;
-
-  uint8_t       fc      :3;
-  uint8_t       comm_bk :1;
-  uint8_t       mute_st :1;
-  uint8_t       snap_st :1;
-  uint8_t       unused4 :2;
+    uint8_t     fc      :3;     // IIR filter corner
+    uint8_t     comm_bk :1;
+    uint8_t     mute_st :1;     // Read only: discharge muted
+    uint8_t     snap_st :1;     // Read only: snapshot taken
+    uint8_t     unused4 :2;
 } ad68_cfa_t;
 
 
-/* For ADBMS6830 config register structure */
+// Configuration Register Group B (Table 56)
 typedef struct
 {
-  uint8_t     vuv0to7 :8;
+    uint8_t     vuv0to7 :8;     // Undervoltage comparison threshold
+    uint8_t     vuv8to11:4;
+    uint8_t     vov0to3 :4;     // Overvoltage comparison threshold
 
-  uint8_t     vuv8to11:4;
-  uint8_t     vov0to3 :4;
+    uint8_t     vov4to11:8;
 
-  uint8_t     vov4to11:8;
+    uint8_t     dcto    :6;     // Discharge timeout, counted from the last WRCFGB: PWM discharge only while it runs (0 = off)
+    uint8_t     dtrng   :1;     // DCTO range: 0 = minutes, 1 = hours
+    uint8_t     dtmen   :1;     // Discharge timer monitor
 
-  uint8_t     dcto    :6;
-  uint8_t     dtrng   :1;
-  uint8_t     dtmen   :1;
-
-  uint16_t    dcc     :16;
+    uint16_t    dcc     :16;    // Discharge on regardless of PWM (bit per cell)
 } ad68_cfb_t;
 
 
+// PWM Register Group A (Table 95): 4-bit discharge duty per cell input, n / 15 of the 937 ms period
 typedef struct
 {
     uint8_t     pwm1    :4;
@@ -159,6 +78,7 @@ typedef struct
 } ad68_pwma_t;
 
 
+// PWM Register Group B (Table 96)
 typedef struct
 {
     uint8_t     pwm13   :4;
@@ -167,10 +87,5 @@ typedef struct
     uint8_t     pwm15   :4;
     uint8_t     pwm16   :4;
 
-    uint32_t    rsv     :32;
+    uint8_t     reserved[4];
 } ad68_pwmb_t;
-
-
-
-
-

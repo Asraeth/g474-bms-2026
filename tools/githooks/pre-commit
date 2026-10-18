@@ -1,0 +1,16 @@
+#!/bin/sh
+#
+# Regenerates everything derived from Core/Inc/bms_config.h (CAN databases, signal lists, README
+# sections, bring-up procedure) and adds what changed to this commit. Stops the commit if the
+# CubeMX settings disagree with the config.
+#
+# Enable once per clone:  git config core.hooksPath tools/githooks
+#
+for py in python3 python py; do
+    if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys; sys.exit(sys.version_info < (3, 6))" >/dev/null 2>&1; then
+        exec "$py" tools/generate.py --pre-commit
+    fi
+done
+echo "pre-commit: Python 3 not found, can't regenerate the files derived from bms_config.h." >&2
+echo "pre-commit: install Python 3, or commit with --no-verify if you haven't changed the config." >&2
+exit 1

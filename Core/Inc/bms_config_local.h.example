@@ -1,0 +1,31 @@
+/*
+ * bms_config_local.h.example
+ *
+ * Bench profile: EVAL-ADBMS6830BMSW boards instead of the car's slaves, each on an 8-cell
+ * simulator, and the IVT-S on a bench supply (doc/bringup_test_procedure.md, "Bench setup").
+ *
+ * Copy this file to Core/Inc/bms_config_local.h and rebuild. That file is git-ignored, every build
+ * warns while it exists, the UART prints a banner at start-up and BMS_Status sets
+ * Local_Config_Overrides. Delete it again before building for the car.
+ *
+ * Anything in bms_config.h can be changed here with #undef / #define.
+ */
+
+// Eval boards in the isoSPI chain
+#undef  CFG_NUM_SLAVES
+#define CFG_NUM_SLAVES              1
+
+// The eval board balances through 15 R in the S+ leg and 15 R in the S- leg: 30 R per cell
+#undef  CFG_BALANCE_RESISTOR_OHM
+#define CFG_BALANCE_RESISTOR_OHM    30.0f
+
+// With more than one eval board on separate cell supplies, IVT U1 can't match the sum of all cells.
+// Stack the supplies in series (U1 across the whole stack), or switch the plausibility check off:
+// #undef  CFG_PACK_V_PLAUSIBILITY_V
+// #define CFG_PACK_V_PLAUSIBILITY_V   0.0f
+
+// Bring-up (doc stage 2): cell voltages and temperatures on the UART every cycle
+// #undef  CFG_DEBUG_PRINT_CELLS
+// #define CFG_DEBUG_PRINT_CELLS       1
+// #undef  CFG_DEBUG_PRINT_TEMPS
+// #define CFG_DEBUG_PRINT_TEMPS       1

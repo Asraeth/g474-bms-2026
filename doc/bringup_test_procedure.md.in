@@ -1,0 +1,188 @@
+# BMS bring-up test procedure
+
+Hardware checks for the parts the PC test suite can't cover: real isoSPI signalling, ADC readings,
+the open-wire threshold, CAN wiring, the IVT-S and the fault output circuit. Work through the stages
+in order and **don't connect high voltage until stages 1-4 have passed**.
+
+Every value below comes from `Core/Inc/bms_config.h` at the commit you flashed. Record results in
+the table at the end. Note the git commit you flashed (`git log -1 --oneline`).
+
+## Before you start
+
+- [ ] `test/run_tests.sh` passes (all tests + DBC check).
+- [ ] `tools/build_arm.sh debug` and `release` build with no warnings, or the CubeIDE build is clean.
+- [ ] Every `VERIFY` item in `Core/Inc/bms_config.h` has been checked against the schematics:
+      cell channel map, slave GPIO map and LED polarity, temperature sensor bias, IVT current
+      direction and U1 wiring, charge current limit, balancing heat budget, pin assignments.
+- [ ] The TSAC ready relay pin ({{pin['TSAC_READY']}}), precharge relay pin ({{pin['PRECHARGE']}}) and
+      bypass pin ({{pin['BYPASS']}}) have pull-downs on the PCB, and the fault output ({{pin['FAULT']}}, open
+      drain) has a pull-up to the fault state. Check with the MCU **unpowered**: the latch must see
+      a fault and the relays must be off.
+
+**Equipment:** USB-CAN adapter(s) for {{can1_bitrate}} (CAN1), {{can2_bitrate}} (CAN2) and {{can3_bitrate}} (CAN3) with
+SavvyCAN or similar, loaded with `can/bms_can1.dbc`, `can/ivt_can2.dbc` and `can/charger_can3.dbc`. Terminal at 1 Mbaud on the ST-LINK
+virtual COM port. Bench PSU, DMM, oscilloscope (2 channels), resistor ladder or cell simulator for
+{{CFG_CELLS_PER_SLAVE}} cells, adjustable voltage source (1.2-2.5 V) to stand in for a temperature sensor.
+Every change of the fault flags or output shows on the UART with the tick it happened on, e.g.
+`Fault 11029 ms: 0x42 -> 0x62 +IVT, output ON`: use those ticks for the reaction times below.
+
+## Bench setup: Nucleo + ADBMS6822 eval, EVAL-ADBMS6830BMSW, IVT-S, USB-CAN adapter
+
+Stages 1, 2 and 4 run on the bench before the car's slave boards exist. Copy
+`Core/Inc/bms_config_local.h.example` to `Core/Inc/bms_config_local.h` (one eval board and its
+{{eval_balance_ohm:g}} Ω balancing path; set `CFG_NUM_SLAVES` there for more boards) and rebuild. That file is
+git-ignored. While it exists the build warns, the UART prints `BENCH BUILD` at start-up and
+`BMS_Status Local_Config_Overrides` = 1. **Delete it before building for the car.**
+
+**CAN transceivers.** Neither the Nucleo nor the ADBMS6822 eval has one. Use one 3.3 V CAN transceiver
+board (SN65HVD230 type) per bus you test. On the bench, PA8 (CAN3 RX) is also wired to the ADBMS6822
+eval's INT1 line; that is a 20 µA current-limited output, so the transceiver simply overrides it. Boards built around 5 V-only parts (TJA1050, MCP2551) need more than 3.3 V
+on TXD. Each bus needs 120 Ω at both ends: 60 Ω between CANH and CANL with everything unpowered.
+
+{{bench_can_table}}
+
+**Nucleo I/O** (Morpho pins from the MB1367 schematic):
+
+{{bench_io_table}}
+
+**EVAL-ADBMS6830BMSW.** ADI's 16-cell board, which differs from the car's slave:
+
+- isoSPI: ADBMS6822 eval port A to the eval board's J3 (isoSPI A). More boards: J4 (isoSPI B) to the
+  next board's J3. The eval board's isoSPI is capacitor-coupled; that works against the 6822 eval's
+  transformer.
+- Cells: {{CFG_CELLS_PER_SLAVE}} cells on J1 CELL0 (bottom) to CELL{{CFG_CELLS_PER_SLAVE}}. Tie CELL{{CFG_CELLS_PER_SLAVE + 1}}-CELL16 to CELL{{CFG_CELLS_PER_SLAVE}}
+  (unused inputs shorted from the top, datasheet "Cell Depopulation" for fully populated boards); V+
+  comes from CELL16 through R55 (0 Ω) and R63 (1 kΩ). A resistor ladder on a ~{{3.7 * CFG_CELLS_PER_SLAVE:.0f}} V supply is fine for
+  measurements: the ladder itself must stay in one piece (see 2.6). For balancing use real cells or a ladder
+  of a few ohms: a balancing cell draws ~{{3.7 / eval_balance_ohm * 1000:.0f}} mA.
+- Temperatures: no sensors on the board. Each GPIO reaches header J5 (GPIOn on pin n, V- on the
+  opposite row) through 1 kΩ. A resistor from the J5 pin to V- stands in for a sensor. With only some
+  inputs populated, list just those in `bms_config_local.h` (`CFG_TEMPS_PER_SLAVE`, `CFG_SLAVE_TEMP_GPIOS`),
+  or the open ones keep the temperature fault on:
+
+{{bench_temp_table}}
+
+- Balancing goes through 15 Ω in both the S+ and S- legs: about V / {{eval_balance_ohm:g}} Ω per cell (the bench
+  profile accounts for it).
+- No LEDs: GPIO{{CFG_SLAVE_LED_RED_GPIO}} and GPIO{{CFG_SLAVE_LED_GREEN_GPIO}} only have pull-ups. An LED switched on pulls its J5 pin to ~0 V.
+
+**IVT-S** (12 V supply for the -12/24 variant):
+
+- CAN2 needs 120 Ω at the IVT end; the CAN2 variant has no termination of its own.
+- Wire it like Figure 11 of the IVT-S datasheet with the cell supply as the battery: shunt in the
+  supply's negative lead, U1 on its positive. U1 then matches the sum of cells, as the plausibility
+  check expects (within {{CFG_PACK_V_PLAUSIBILITY_V:g}} V). With one eval board U1 must be within {{bench_pack_v_min:.1f}}-{{bench_pack_v_max:.1f}} V.
+- U2 (vehicle side of the AIRs): a second supply, starting at 0 V. Raising it by hand stands in for
+  the precharge circuit.
+
+**Precharge on the bench:** with the fault output released and the SDC input closed, send
+{{ts_request_frame}} from the USB-CAN adapter. The precharge output ({{pin['PRECHARGE']}}) turns on. Raise U2
+past {{CFG_PRECHARGE_TARGET_PERCENT}} % of U1: the bypass output ({{pin['BYPASS']}}) turns on and precharge turns off {{CFG_PRECHARGE_OVERLAP_MS}} ms
+later. Leave U2 low instead: after {{CFG_PRECHARGE_TIMEOUT_MS / 1000:g}} s both stay off (`Failed`) until the request goes to
+`00` and back to `01`.
+
+---
+
+Useful voltages for the Enepaq temperature sensor (`CFG_TEMP_TABLE_*`):
+
+{{temp_table}}
+
+Outside {{temp_table_v_min:.2f}}-{{temp_table_v_max:.2f}} V the BMS reads {{CFG_TEMP_INVALID_C:g}} °C (sensor fault) and trips.
+
+**Measuring reaction time:** scope channel 1 on the stimulus (PSU step, the sense wire you pull,
+the sensor voltage source), channel 2 on {{pin['FAULT']}} (fault output). Trigger on channel 1. The time to
+{{pin['FAULT']}} going to the fault level must be **under {{CFG_FS_MAX_REACTION_MS}} ms**; the configured worst case is
+{{worst_reaction_ms}} ms (fault deadline + safety tick).
+
+---
+
+## Stage 1: Controller only (Nucleo + ADBMS6822, no slaves, no IVT, no HV)
+
+| # | Test | Expected |
+|---|---|---|
+| 1.1 | Power up, watch the UART | `PROGRAM START`, `SOFT RESET`, `BMS INIT`, then `PEC ERROR` / `SPI ERROR` messages (no slaves), and once `CAN TX Buffer Overwritten (CAN1 burst not getting out ...)` while nothing on CAN1 acknowledges. No hang, no reset loop. |
+| 1.2 | Fault output and relay | {{pin['FAULT']}} at the fault level the whole time, {{pin['TSAC_READY']}} low (relay off). |
+| 1.3 | Reset the Nucleo (black button) while watching {{pin['FAULT']}} on the scope | {{pin['FAULT']}} stays at the fault level through the reset (external pull-up). {{pin['TSAC_READY']}} stays low. |
+| 1.4 | CAN1 ({{can1_bitrate}}) | `BMS_Pack`, `BMS_Status`, `BMS_Summary` and `BMS_Energy` every {{CFG_CAN_TX_PERIOD_MS}} ms. `BMS_Fast_1` / `BMS_Fast_2` every {{CFG_CAN_FAST_PERIOD_MS}} ms, all values "not available" (raw INT32_MIN / -32768 / 65535). No slave or cell frames (the chain never initialises). `BMS_Status`: `Fault_Startup` = 1, `Fault_IVT` = 1, `Fault_Output_Active` = 1, `TSAC_Ready` = 0. |
+| 1.5 | CAN2 ({{can2_bitrate}}, adapter acknowledging) | Every {{CFG_IVT_RETRY_INTERVAL_MS}} ms: {{ivt_command_count}} frames on 0x{{CFG_IVT_ID_COMMAND:X}} (IVT configuration, first 4 bytes shown, the rest 0): {{ivt_commands}}. |
+| 1.6 | CAN2 with nothing acknowledging | UART: `IVT not acknowledging on CAN2, configuration skipped`. No lock-up. |
+| 1.7 | Short CAN1 H to L for ~1 s, then remove | Bus-off, then frames resume within ~50 ms of removing the short. |
+| 1.8 | Watchdog: build with `-DBMS_TEST_WATCHDOG` (Debug build, add the define), flash, run without the debugger | After 10 s: `BMS_TEST_WATCHDOG: hanging the main loop`, then within ~{{CFG_WATCHDOG_TIMEOUT_MS}} ms `PROGRAM START` again. {{pin['FAULT']}} holds the fault level throughout. **Flash the normal build afterwards.** |
+| 1.9 | CAN3 ({{can3_bitrate}}, adapter acknowledging) | `BMS_Charger_Command` every {{CFG_CAN_TX_PERIOD_MS}} ms with `Charger_Disable` = 1. Nothing from the charger on CAN1. |
+
+## Stage 2: One slave board on a cell simulator (no HV)
+
+Use the bench profile with one slave (see Bench setup): an EVAL-ADBMS6830BMSW wired as described
+there, or one of the car's slave boards. Feed the cell inputs from a resistor ladder / cell simulator at
+~3.7 V per cell. Put a {{temp_v(25):.2f}} V source (25 °C), a real sensor or, on the eval board, the
+resistors from the Bench setup table on each TEMP input. Set `CFG_DEBUG_PRINT_CELLS` and
+`CFG_DEBUG_PRINT_TEMPS` to 1 in `bms_config_local.h` for this stage (cell voltages and temperatures on the UART every cycle).
+
+| # | Test | Expected |
+|---|---|---|
+| 2.1 | Comms | No PEC errors after `BMS INIT`. `LoopTime` on the UART well under {{CFG_MEAS_CYCLE_MAX_MS}} ms. |
+| 2.2 | Cell voltages vs DMM at the connector | Within ±10 mV per cell. Cells in the right order (change one cell and check which one moves). |
+| 2.3 | Slave voltage, die temperature | Slave voltage (VPV, measured at the V+ pin) a little below the sum of cells: the slave's supply current flows through the resistor in front of V+ (1 kΩ on the eval board: 0.5-1 V low, ~0.7 V measured). The sum of cells is what the pack checks use. Die temperature near ambient. |
+| 2.4 | Temperatures | Each sensor input reads its applied voltage per the table, in TEMP1-{{CFG_TEMPS_PER_SLAVE}} order. |
+| 2.5 | Open-wire calibration | UART `intact ratio min` per slave. Expect ~0.85-0.95. Set `CFG_OPEN_WIRE_MIN_RATIO` comfortably below the lowest value you see (now {{CFG_OPEN_WIRE_MIN_RATIO:g}}). |
+| 2.6 | Open wire | With nothing balancing, disconnect one sense wire at the connector: `BMS_SegNN_CellNN_OpenWire` = 1 (UART `OW` mask), fault output **< {{CFG_FS_MAX_REACTION_MS}} ms** (scope). Reconnect: fault output releases ~{{CFG_FAULT_CLEAR_DELAY_MS / 1000:g}} s later. Repeat for the bottom wire, a middle wire and the top wire. Only the sense lead may open: on a ladder, keep the ladder joined and open a separate lead from its tap to the connector. Breaking the ladder itself (like a broken cell link) drives its current through the slave's inputs (~17 V across one eval-board input, above the 12 V absolute maximum), and the open-wire check doesn't see that as open. On the eval board's single supply the bottom and top wires carry the supply: test a middle one. |
+| 2.7 | Over/under-voltage | Raise one cell above {{CFG_CELL_OV_V:.2f}} V, then drop one below {{CFG_CELL_UV_V:.2f}} V: fault **< {{CFG_FS_MAX_REACTION_MS}} ms** each, `Fault_Voltage`. |
+| 2.8 | Over/under-temperature | Sensor input to {{temp_v(CFG_CELL_TEMP_MAX_C + 2):.2f}} V (> {{CFG_CELL_TEMP_MAX_C:g}} °C) then {{temp_v(CFG_CELL_TEMP_MIN_C - 2):.2f}} V (< {{CFG_CELL_TEMP_MIN_C:g}} °C): fault **< {{CFG_FS_MAX_REACTION_MS}} ms**, `Fault_Temp`. Disconnect a sensor: fault. |
+| 2.9 | Glitch immunity | A single ~50 ms voltage spike on one cell input must **not** trip the AMS. |
+| 2.10 | Balancing | Only runs with the AMS out of fault (on the bench: IVT connected). With the cells within {{CFG_BALANCE_THRESHOLD_V * 1000:g}} mV of each other, no balancing. Raise one cell {{CFG_BALANCE_THRESHOLD_V * 1000 + 20:g}} mV (on a ladder: a resistor ~2 % of the ladder resistor in series with that cell's): `CellNN_Balancing` = 1, current ≈ V / {{CFG_BALANCE_RESISTOR_OHM:g}} Ω flows (V / {{eval_balance_ohm:g}} Ω on the eval board; DMM across the resistor), stops when within {{(CFG_BALANCE_THRESHOLD_V - CFG_BALANCE_HYSTERESIS_V) * 1000:g}} mV (`CFG_BALANCE_HYSTERESIS_V`). A ladder of more than a few ohms per cell can't supply the current: the cell sags, reads lower after each balancing period and balancing switches on and off; real cells don't do that. Raise all {{CFG_CELLS_PER_SLAVE}}: duty limited to {{CFG_BALANCE_MAX_POWER_PER_SLAVE_W:g}} W per slave (`CFG_BALANCE_MAX_POWER_PER_SLAVE_W`). Check the slave board temperature after 10 minutes at the limit. |
+| 2.11 | LEDs | Call `BMS_SetSlaveLeds(0, true, false)` (debugger or a temporary line): red on, green off, temperature readings unchanged. On the eval board: J5 pin {{CFG_SLAVE_LED_RED_GPIO}} near 0 V, pin {{CFG_SLAVE_LED_GREEN_GPIO}} high. |
+| 2.12 | isoSPI cable | Unplug: fault < {{CFG_FS_MAX_REACTION_MS}} ms (`Fault_Comms`). Plug back in: chain re-initialises, fault clears. |
+| 2.13 | Slave supply dip | Interrupt the slave's supply for well under 0.1 s (touch and release, or a switch): UART `Slave 1 was reset ...`, readings as before within a cycle, no AMS fault. Interrupted for 1 s: fault < {{CFG_FS_MAX_REACTION_MS}} ms (`Fault_Comms`), then the chain re-initialises and the fault clears. |
+
+## Stage 3: Full chain, {{CFG_NUM_SLAVES}} slaves (no HV)
+
+Delete `Core/Inc/bms_config_local.h` (the car's {{CFG_NUM_SLAVES}} slaves), or set its `CFG_NUM_SLAVES` to the number of
+boards you have. All slaves on cell simulators or low-voltage modules.
+
+| # | Test | Expected |
+|---|---|---|
+| 3.1 | Measurement cycle | UART `LoopTime` ≤ {{CFG_MEAS_CYCLE_MAX_MS}} ms and no `Measurement cycle ... longer than CFG_MEAS_CYCLE_MAX_MS` warnings. If longer, the timing in `bms_config.h` must be reworked: the compile-time checks will tell you what fits in {{CFG_FS_MAX_REACTION_MS}} ms. |
+| 3.2 | Power cycle the controller 10 times | Every start: chain wakes, no PEC errors after init, fault releases within ~2 s. |
+| 3.3 | Slave order | Change one cell on slave 1, then slave {{CFG_NUM_SLAVES}}, and check the right `BMS_SegNN` frames move. |
+| 3.4 | Repeat 2.6-2.8 on the first, a middle and the last slave | Same results. |
+| 3.5 | CAN1 bus load | With the rest of the car bus running, the BMS adds {{can1_load_min:.0f}}-{{can1_load_max:.0f}} % at {{can1_bitrate}}. No `CAN TX Buffer Overwritten` on the UART. `BMS_Fast_1` / `BMS_Fast_2` arrive every {{CFG_CAN_FAST_PERIOD_MS}} ms (±1 ms) also during the {{burst_hz:g}} Hz bursts. Every node on CAN1 (VCU, inverter, logger, charger) must be set to {{can1_bitrate}}. |
+| 3.6 | Soak | Run 1 hour. No faults, no PEC error trend, max loop time stable. |
+
+## Stage 4: IVT-S on CAN2 (no HV)
+
+| # | Test | Expected |
+|---|---|---|
+| 4.1 | Power up with the IVT | UART `Configuring IVT`; 0x{{CFG_IVT_ID_RESULT_I:X}} every {{CFG_IVT_CURRENT_PERIOD_MS}} ms, 0x{{CFG_IVT_ID_RESULT_U1:X}} every {{CFG_IVT_U1_PERIOD_MS}} ms, 0x{{CFG_IVT_ID_RESULT_U2:X}} every {{CFG_IVT_U2_PERIOD_MS}} ms and 0x{{CFG_IVT_ID_RESULT_WH:X}} every {{CFG_IVT_ENERGY_PERIOD_MS}} ms on CAN2, nothing else from the IVT (~{{ivt_msgs_per_s:.0f}} frames/s). Fault releases (if stages 2-3 conditions are healthy). The datasheet is ambiguous on U2's minimum output time (2 or 3 ms): check the 0x{{CFG_IVT_ID_RESULT_U2:X}} interval really is {{CFG_IVT_U2_PERIOD_MS}} ms. |
+| 4.2 | Current direction | Pass a known DC current through the shunt in the **discharge** direction (bench PSU and load). `Pack_Current` positive. If negative, flip `CFG_IVT_CURRENT_DISCHARGE_POSITIVE`. |
+| 4.3 | U1 | Apply a known voltage to U1: `Pack_Voltage_IVT` matches the DMM. Confirm U1 is on the **battery side** of the AIRs (otherwise the pack-voltage limits will fault whenever the AIRs are open). |
+| 4.4 | Overcurrent | Temporarily set `CFG_MAX_DISCHARGE_CURRENT_A` (now {{CFG_MAX_DISCHARGE_CURRENT_A:g}} A) to just below your test current: fault < {{CFG_FS_MAX_REACTION_MS}} ms, `Fault_Current`. Restore the limit. |
+| 4.5 | Unplug the IVT CAN or supply | `Fault_IVT` {{CFG_IVT_FAULT_TIMEOUT_MS}}-{{worst_reaction_ms}} ms after the last IVT frame (it waits out an IVT restart). Plug back in: UART `IVT restarted, configuring` after its alive message, results at the BMS's rates again, fault clears. |
+| 4.5a | IVT restart | With the IVT result status 0, send `0x411` `3F 00 00 00 00 00 00 00` (IVT RESTART) from the USB-CAN adapter: the IVT is gone for ~240 ms. The BMS sends nothing until its alive message (~190 ms after the command), then reconfigures it at once, and `Fault_IVT` doesn't appear during the gap. The IVT logs a RESTART as a watchdog reset and comes back with status 8 (system error), latched until its supply is cycled, so `Fault_IVT` follows ~0.2 s after its data resumes: cycle the IVT supply afterwards. |
+| 4.5b | Power-on order | Power the BMS first, then the IVT (and, from stage 3, the slaves) seconds later, and the other way round: each time the BMS ends up healthy without a reset (UART `Configuring IVT` / `IVT restarted, configuring`, `--- BMS INIT ---` when the chain appears). |
+| 4.5c | IVT bus stress test (optional) | USB-CAN adapter on CAN2: `python test/bench/ivt_bus_stress.py --channel <adapter> --uart <ST-LINK COM port>`. Every test passes: floods, junk frames, spurious alive messages, stray commands, the restart, the stand-in IVT's overcurrent / pack voltage / sensor error cases and the soak (every real fault within {{CFG_FS_MAX_REACTION_MS}} ms, no false trips). |
+| 4.6 | CAN2 termination | The IVT-S-500-U3-I-**CAN2** has no termination on board. With everything unpowered, measure CANH-CANL on CAN2: **60 Ω** (120 Ω at each end). 120 Ω means one terminator is missing. |
+| 4.7 | U2 | Apply a known voltage to U2 (vehicle side of the AIRs): `Status Precharge_Percent` and the IVT U2 frame match. |
+| 4.8 | Power and energy | With a known current and U1: `BMS_Energy Power` and `Fast_Power` = I x U1 ({{CFG_CAN_POWER_W_PER_BIT:g}} W steps). `Fast_Pack_Current` / `Fast_Pack_Voltage` / `Fast_Vehicle_Voltage` equal the IVT's own 0x{{CFG_IVT_ID_RESULT_I:X}} / 0x{{CFG_IVT_ID_RESULT_U1:X}} / 0x{{CFG_IVT_ID_RESULT_U2:X}} values to the mA / mV. Run 10 minutes and compare `Energy_Used` with I x U1 x time. |
+| 4.9 | Inverter limits | `BMS_Inverter_DC_Limit` = {{CFG_MAX_DISCHARGE_CURRENT_A:g}} A and `BMS_Inverter_DC_Brake_Limit` = -{{CFG_INVERTER_REGEN_CURRENT_A:g}} A every {{CFG_INVERTER_LIMIT_PERIOD_MS}} ms once the fault output releases, 0 A while it's asserted; `BMS_Limits` shows the same with `Discharge_Power_Limit` = discharge limit x U1. Put {{temp_v((CFG_INVERTER_DERATE_START_C + CFG_INVERTER_DERATE_END_C) / 2):.2f}} V on one temperature input ({{(CFG_INVERTER_DERATE_START_C + CFG_INVERTER_DERATE_END_C) / 2:g}} °C): discharge halfway to {{CFG_INVERTER_DERATE_CURRENT_A:g}} A, regen {{CFG_INVERTER_REGEN_CURRENT_A - (CFG_INVERTER_REGEN_CURRENT_A - CFG_INVERTER_REGEN_DERATE_CURRENT_A) * ((CFG_INVERTER_DERATE_START_C + CFG_INVERTER_DERATE_END_C) / 2 - CFG_INVERTER_REGEN_DERATE_START_C) / (CFG_INVERTER_REGEN_DERATE_END_C - CFG_INVERTER_REGEN_DERATE_START_C):.1f}} A, both derating flags set. With the HV500 connected: it reports the same limits (DTI CAN Tool) and won't draw more. |
+| 4.10 | Runtime settings (GUI) | `GUI/bms_gui.py`, connected to CAN1: the AMS settings tab reads the built-in values and "nothing saved in flash". Write a power limit of 50 kW: `BMS_Limits` drops to 50 kW (or less) within {{CFG_INVERTER_LIMIT_PERIOD_MS}} ms and the Pack tab's "Limited by" shows *settings*. Write {{CFG_INVERTER_POWER_LIMIT_W + 1:.0f}} W: refused, value unchanged. Save, power-cycle the BMS: UART `Settings: loaded from flash`, 50 kW still in force. Save with the TS active: refused. Restore built-in values and Save: back to {{CFG_INVERTER_POWER_LIMIT_W / 1000:g}} kW after a power cycle. Change the charge current and voltage: the charger command on CAN3 follows. |
+
+## Stage 5: Accumulator (HV, follow the team's HV procedures)
+
+| # | Test | Expected |
+|---|---|---|
+| 5.1 | Every cell voltage vs a DMM spot check | Within ±10 mV. `Pack_Voltage_IVT` vs `Pack_Voltage_SumOfCells` within a few volts at rest. |
+| 5.2 | All temperatures plausible | Within a few °C of each other at rest. |
+| 5.3 | AMS light and latch | Any fault opens the SDC, the AMS light stays on until the manual reset (EV 5.8.12, EV 6.1.6), the TSAC ready relay drops. |
+| 5.4 | Inspection demonstration (EV 5.8.13, EV 5.8.14) | For each segment, interrupt one voltage sense and one temperature sense: SDC opens. Have a plan for doing this safely on the closed TSAC. |
+| 5.5 | Start-up SoC | Note the cell voltages on CAN and enter them in the Battery Tracker: `BMS_Energy SoC` at start-up matches the sheet's Pack SoC (the BMS doesn't truncate to whole %). |
+| 5.6 | Precharge | Send the TS request: precharge relay closes, U2 rises, bypass closes at ≥ {{CFG_PRECHARGE_TARGET_PERCENT}} % (`Precharge_Percent`), precharge relay opens ~{{CFG_PRECHARGE_OVERLAP_MS}} ms later. Time it: it must finish well inside `CFG_PRECHARGE_TIMEOUT_MS` (now {{CFG_PRECHARGE_TIMEOUT_MS}} ms); set the timeout to ~2x the measured time. Scope the AIR coil vs U2 to confirm ≥ {{CFG_PRECHARGE_TARGET_PERCENT}} % at closing. |
+| 5.7 | Precharge aborts | With TS active: send deactivate, open the SDC, and trigger an AMS fault (e.g. pull a sense wire). Each must open both relays. Repeat the request after a failed precharge: nothing happens until the request goes to 0 and back to 1. |
+| 5.8 | Charging | Charger button with SDC closed: charging starts. Above {{CFG_CELL_CHARGE_TEMP_MAX_C:g}} °C or with SDC open: charging stops. (New charger code still to come.) |
+
+---
+
+## Results
+
+| Stage | Test | Date | Commit | Result / measured value | By |
+|---|---|---|---|---|---|
+| | | | | | |

@@ -28,26 +28,43 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32g4xx_hal.h"
-#include "bms_topology.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-//#include "common.h"
-//#include "adbms_include.h"
+#include "bms_config.h"
 
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
+typedef struct { uint32_t freq,period; float duty; } BmsImdStatus;
+void BMS_ProcessImdCapture(void);
+BmsImdStatus BMS_GetImdStatus(void);
+
 typedef enum {
-    BMS_OK          = 0x00,
-    BMS_ERR_COMMS   = 0x01,
-    BMS_ERR_VOLTAGE = 0x02,
-    BMS_ERR_TEMP    = 0x04,
-    BMS_ERR_CURRENT = 0x08,
-    BMS_ERR_IVT     = 0x10, // Pack sensor invalid/missing; not an isoSPI fault.
+    BMS_OK            = 0x00,
+    BMS_ERR_COMMS     = 0x01,   // isoSPI comms / PEC error, or measurements stale
+    BMS_ERR_VOLTAGE   = 0x02,   // Cell, slave or pack voltage out of range
+    BMS_ERR_TEMP      = 0x04,   // Cell or slave die temperature out of range
+    BMS_ERR_CURRENT   = 0x08,   // Pack current out of range
+    BMS_ERR_OPEN_WIRE = 0x10,   // Cell sense wire open
+    BMS_ERR_IVT       = 0x20,   // IVT-S message timeout or sensor error
+    BMS_ERR_CAN       = 0x80,
+    BMS_ERR_CHARGER   = 0x100,
+    BMS_ERR_PRECHARGE = 0x200,
+    BMS_ERR_SENSOR    = 0x400,
+    BMS_ERR_INTERNAL  = 0x800,
+    BMS_ERR_PEC       = 0x1000,
+    BMS_ERR_COUNTER   = 0x2000,
+    BMS_ERR_CELL_STALE= 0x4000,
+    BMS_ERR_AUX_STALE = 0x8000,
+    BMS_ERR_BALANCE_STOP=0x10000,
+    BMS_ERR_CELL_UV=0x20000,
+    BMS_ERR_CELL_OV=0x40000,
+    BMS_ERR_CHARGE_TEMP=0x80000,
+    BMS_ERR_STARTUP   = 0x40,   // No valid measurements yet
 } BMS_StatusTypeDef;
 
 
@@ -61,11 +78,13 @@ extern TIM_HandleTypeDef htim2;
 
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
+// Pack topology and limits live in bms_config.h
 
 #define BIT_SET(byte,nbit)   ((byte) |=  (UINT32_C(1) << (nbit)))
 #define BIT_CLEAR(byte,nbit) ((byte) &= ~(UINT32_C(1) << (nbit)))
@@ -78,6 +97,9 @@ extern FDCAN_HandleTypeDef hfdcan2;
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+
+void BMS_Startup(void);
+void BMS_MainLoopIteration(void);
 
 
 

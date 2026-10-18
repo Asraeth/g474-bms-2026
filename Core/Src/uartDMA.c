@@ -1,63 +1,50 @@
 /*
  * uartDMA.c
  *
- *  Created on: Jan 25, 2025
- *      Author: amrlxyz
+ * printf to the debug UART (LPUART1, 1 Mbaud) without waiting: messages go into a ring buffer, and DMA sends
+ * it in the background, one contiguous run at a time (up to the end of the buffer, then from its start).
  */
 
 #include "uartDMA.h"
-#include "stdio.h"
-#include "stdarg.h"
-#include "stdbool.h"
 #include "main.h"
 
-#define uartHandle hlpuart1
-#define BUFFER_SIZE 10000
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdbool.h>
+
+#define uartHandle      hlpuart1
+#define BUFFER_SIZE     10000
+#define MESSAGE_MAX     256
+
+static char         buffer[BUFFER_SIZE];
+static volatile int head = 0;           // Next byte written
+static volatile int tail = 0;           // Next byte to send
+static bool         isWrapped = false;  // head has wrapped to the start, tail hasn't yet
+static int          tailDma = 0;        // Where tail moves when the running transfer is done
+
+volatile uint32_t droppedMessages = 0;  // Didn't fit in the buffer
 
 
-char buffer[BUFFER_SIZE] = {0};
-volatile int head = 0;
-volatile int tail = 0;
-
-static uint32_t bufferFreeSize = 0;
-
-bool isFull = false;
-bool isWrapped = false;
-
-int tailDma = 0; // Stores the tail index of the buffer being sent
-
-
-
-int getDataLen(void)
+static int getDataLen(void)
 {
-    int tempTail = tail;
-
-    if (head >= tempTail)
-    {
-        return head - tempTail; // Data is in a single contiguous block
-    }
-    else
-    {
-        return BUFFER_SIZE - tempTail + head; // Data wraps around the buffer
-    }
+    int t = tail;
+    return head >= t ? head - t : BUFFER_SIZE - t + head;
 }
 
 
-void startUartDmaTx(void)
+// Sends from tail to head, or to the end of the buffer if head has wrapped. Interrupts off or in the
+// DMA interrupt, with the UART idle and data waiting.
+static void startUartDmaTx(void)
 {
-    // Get the data len up to the buffer size only
     int dataLen = isWrapped ? BUFFER_SIZE - tail : head - tail;
-
-    // get pointer to the tail data
-    uint8_t* dataPtr = (uint8_t*)(buffer + tail);
-
     tailDma = tail + dataLen;
-
-    HAL_UART_Transmit_DMA(&uartHandle, dataPtr, dataLen);
+    HAL_UART_Transmit_DMA(&uartHandle, (uint8_t*)(buffer + tail), (uint16_t)dataLen);
 }
 
 
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef * huart)
+// The HAL marks the UART ready just before calling this. Every interrupt has the same priority, so no other
+// one can print in between and start a transfer from the old tail.
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
 {
     if (huart == &uartHandle)
     {
@@ -67,7 +54,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef * huart)
             tail = 0;
             isWrapped = false;
         }
-        if (head > tail)
+        if (head != tail)       // More was written meanwhile (also when head has wrapped)
         {
             startUartDmaTx();
         }
@@ -75,65 +62,52 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef * huart)
 }
 
 
-// Function to append formatted data to the ring buffer
+// Safe to call from interrupts, but there without %f / %e / %g: newlib's float formatting allocates and keeps
+// state shared with the main loop's printing, which an interrupt could corrupt. Messages are cut at
+// MESSAGE_MAX - 1 characters; one that doesn't fit in the buffer is dropped (droppedMessages).
 int printfDma(const char *format, ...)
 {
-    bufferFreeSize = BUFFER_SIZE - getDataLen();
-
-    const int TEMP_BUFF_SIZE = 256;
-
-    char temp_buffer[TEMP_BUFF_SIZE];
+    char message[MESSAGE_MAX];
     va_list args;
     va_start(args, format);
-    int written = vsnprintf(temp_buffer, TEMP_BUFF_SIZE, format, args);
+    int written = vsnprintf(message, MESSAGE_MAX, format, args);
     va_end(args);
 
     if (written < 0)
     {
-        return -1; // Error in formatting
+        return -1;
     }
-    else if (written > TEMP_BUFF_SIZE)
+    if (written >= MESSAGE_MAX)
     {
-        // Over limit of temp buffer
-        Error_Handler();
+        written = MESSAGE_MAX - 1;
     }
-    else if (getDataLen() + written > BUFFER_SIZE)
+
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    // Never completely full: head == tail means empty
+    if (written >= BUFFER_SIZE - getDataLen())
     {
-        // Buffer full
-//        Error_Handler();
+        droppedMessages++;
+        __set_PRIMASK(primask);
+        return 0;
     }
 
     for (int i = 0; i < written; i++)
     {
-        buffer[head++] = temp_buffer[i];
-
+        buffer[head++] = message[i];
         if (head == BUFFER_SIZE)
         {
             isWrapped = true;
             head = 0;
         }
-
-        if (head == tail)
-        {
-            printfDma("\n\n UART BUFFER FULL DATA OVERWRITTEN \n\n");
-//            Error_Handler();
-        }
     }
 
-    if (HAL_UART_GetState(&uartHandle) == HAL_UART_STATE_READY)
+    if (written > 0 && HAL_UART_GetState(&uartHandle) == HAL_UART_STATE_READY)
     {
         startUartDmaTx();
     }
 
+    __set_PRIMASK(primask);
     return written;
-}
-
-
-
-void printfFlushBuffer(void)
-{
-    if (HAL_UART_GetState(&uartHandle) == HAL_UART_STATE_READY)
-    {
-        startUartDmaTx();
-    }
 }

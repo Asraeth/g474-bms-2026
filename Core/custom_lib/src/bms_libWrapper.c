@@ -1,41 +1,21 @@
 /*
- * bms_libWrapper.cpp
+ * bms_libWrapper.c
  *
- *  Created on: Nov 24, 2024
- *      Author: amrlxyz
- */
-
-/*
- * Compatible commands
- * ADBMS2950 == ADBMS6830
+ * The measurement cycle (BMS_ProgramLoop) and what is built from it: limit checks for the safety module,
+ * balancing, the SoC update and the CAN frames.
  *
- * RDCFGA
- * RDCFGB
- * ADI1     = ADCV
- * ADI2     = ADSV
- * RDI      = RDFCA or RDCVA
- * RDVB     = RDFCB or RDCVB
- * RDIVB1   = RDFCC or RDCVC
- * RDIACC   = RDACA
- * RDVBACC  = RDACB
- * RDIVB1ACC= RDACC
+ * One cycle on the ADBMS6830B chain (datasheet Rev. 0):
+ *   RSTCC              command counters to 0; every read is checked against the commands sent since
+ *   RDCFGA             configuration A read back: a slave with REFON off has reset since the last cycle
+ *   WRCFGA             configuration A rewritten every cycle (a slave that reset gets REFON and its GPIOs back),
+ *                      ADCV after it if a slave reset (its continuous C-ADC is off)
+ *   ADAX               AUX conversion (GPIO temperatures, V+, die temperature), collected at the end
+ *   ADSV, RDSVx        S-ADC cell voltages (the C-ADC runs continuously from start-up, but isn't read)
+ *   ADSV OW even/odd   open wire check, if enabled
+ *   PLAUX1, RDAUXx     AUX results
+ *   WRCFGB, WRPWMx     balancing
  *
- */
-
-/*
- * Commands Notes
- *
- * -- 6830 --
- * ADCV : Start ADC
- * ADSV : Start redundancy ADC
- * RDCVA: Read Cell Voltage A
- * RDFCA: Read Filtered Cell A
- * RDACA: Read Averaged Cell A
- *
- * -- 2950 --
- * ADIx: Start IxADC and VBxADC
- * RDI : Read Read I1ADC and I2ADC results
- *
+ * Pack topology, pinout and limits come from bms_config.h.
  */
 
 
@@ -44,6 +24,16 @@
 #include "bms_utility.h"
 #include "bms_mcuWrapper.h"
 #include "bms_cmdlist.h"
+#include "bms_safety.h"
+#include "bms_ivt.h"
+#include "bms_gpio.h"
+#include "bms_soc.h"
+#include "bms_precharge.h"
+#include "bms_inverter.h"
+#include "bms_settings.h"
+#include "bms_health.h"
+#include "bms_charger.h"
+#include "bms_adc.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -54,43 +44,67 @@
 #include "bms_can.h"
 
 
+#define NUM_CHANNELS        16      // ADBMS6830B cell inputs
+#define NUM_GPIOS           10
+#define NUM_VOLTAGE_GROUPS  6       // RDSVA..RDSVF
+#define NUM_AUX_GROUPS      5       // RDAUXA..RDAUXD + RDSTATA
+#define AUX_GROUP_D         3       // G10, VMV, VPV
+#define AUX_GROUP_STATA     4       // VREF2, ITMP
+
+#define CFGA0_REFON         0x80    // Configuration register A, byte 0: reference stays on
+
+#define ADC_LSB_V           0.00015f
+#define ADC_OFFSET_V        1.5f
+#define PWM_DUTY_MAX        0b1111  // 100 %
+
+#define CAN_MEAS_FRAMES     CFG_CAN_MEAS_FRAMES
+#define CAN_VALUES_PER_FRAME 4
+#define CAN_INVALID_INT16   INT16_MIN   // Unused slot in a packed frame, or value not available
+#define CAN_INVALID_INT32   INT32_MIN   // Value not available
+#define CAN_UNKNOWN_UINT16  0xFFFF
+
+
+typedef enum
+{
+    REG_CONFIG_A,
+    REG_CONFIG_B,
+    REG_PWM_A,
+    REG_PWM_B,
+    REG_SID,
+} RegisterTypes;
+
+
 typedef struct
 {
     // From/For Config Registers
-    ad68_cfa_t cfa_Tx   [TOTAL_AD68];
-    ad68_cfa_t cfa_Rx   [TOTAL_AD68];
-    ad68_cfb_t cfb_Tx   [TOTAL_AD68];
-    ad68_cfb_t cfb_Rx   [TOTAL_AD68];
+    ad68_cfa_t cfa_Tx   [TOTAL_IC];
+    ad68_cfb_t cfb_Tx   [TOTAL_IC];
 
-    ad68_pwma_t pwma    [TOTAL_AD68];
-    ad68_pwmb_t pwmb    [TOTAL_AD68];
+    ad68_pwma_t pwma    [TOTAL_IC];
+    ad68_pwmb_t pwmb    [TOTAL_IC];
 
-    // From Read Registers
-    float v_cell        [TOTAL_CELL_VOLTAGE_TYPES][TOTAL_AD68][TOTAL_CELL];
+    // S-ADC cell voltages
+    float v_cell        [TOTAL_IC][CFG_CELLS_PER_SLAVE];
     // Calculated Values
-    float v_cell_diff   [TOTAL_CELL_VOLTAGE_TYPES][TOTAL_AD68][TOTAL_CELL];
-    float v_cell_sum    [TOTAL_VOLTAGE_TYPES][TOTAL_AD68];
-    float v_cell_avg    [TOTAL_VOLTAGE_TYPES][TOTAL_AD68];
-    float v_cell_min    [TOTAL_VOLTAGE_TYPES][TOTAL_AD68];
-    float v_cell_max    [TOTAL_VOLTAGE_TYPES][TOTAL_AD68];
-    float v_cell_delta  [TOTAL_VOLTAGE_TYPES][TOTAL_AD68];
+    float v_cell_sum    [TOTAL_IC];
+    float v_cell_min    [TOTAL_IC];
+    float v_cell_max    [TOTAL_IC];
 
     // From AUX measurement
-    // Direct TEMP1-TEMP8 input voltages, separate from cell-voltage storage.
-    float v_temp        [TOTAL_AD68][TOTAL_TEMP];
-    float v_temp_diff   [TOTAL_AD68][TOTAL_TEMP];
-    float v_segment     [TOTAL_AD68];
-    float temp_cell     [TOTAL_AD68][TOTAL_TEMP];
-    float temp_ic       [TOTAL_AD68];
-    // Acquisition validity does not imply a confirmed thermistor conversion.
-    bool temp_input_valid [TOTAL_AD68][TOTAL_TEMP];
-    bool temp_valid       [TOTAL_AD68][TOTAL_TEMP];
-    bool v_segment_valid  [TOTAL_AD68];
-    bool temp_ic_valid    [TOTAL_AD68];
+    float v_segment     [TOTAL_IC];
+    float temp_cell     [TOTAL_IC][CFG_TEMPS_PER_SLAVE];
+    float temp_ic       [TOTAL_IC];
+    float raw_aux[TOTAL_IC][CFG_TEMPS_PER_SLAVE];
+    uint8_t raw_valid[TOTAL_IC], celsius_valid[TOTAL_IC];
 
-    // flag stored in bits
-    uint16_t isDischarging          [TOTAL_AD68];         // isDischarging Flag
-    uint16_t isCellFaultDetected    [TOTAL_AD68];
+    // flag stored in bits, one per cell
+    uint16_t isDischarging          [TOTAL_IC];
+    uint16_t isCellFaultDetected    [TOTAL_IC];
+    uint16_t isOpenWire             [TOTAL_IC];
+    float    owRatioMin             [TOTAL_IC];     // Lowest open-wire/normal ratio of the intact inputs (for calibration)
+
+    bool ledRed     [TOTAL_IC];
+    bool ledGreen   [TOTAL_IC];
 
 } Ic_ad68;
 
@@ -101,331 +115,263 @@ typedef struct
     bool isCommsError       [TOTAL_IC];
 
     // Pack status
-    float v_pack_total; // Cell-voltage sum only; never the IVT U1 measurement.
+    float v_pack_total;
     float v_pack_min;
     float v_pack_max;
-    bool cell_voltage_sum_valid;
-    bool cell_snapshot_valid[TOTAL_CELL_VOLTAGE_TYPES];
-    uint32_t cell_last_received_ms[TOTAL_CELL_VOLTAGE_TYPES];
-    bool aux_snapshot_valid;
-    uint32_t aux_last_received_ms;
-    BMS_TransportFault last_acquisition_transport_fault;
-    bool last_pec_error, last_counter_error, discharge_stop_failed;
-    BMS_CommandCounterChain last_counter_check;
+    float t_pack_min;
+    float t_pack_max;
 } Ic_common;
 
 
-Ic_common   ic_common;
-Ic_ad68     ic_ad68;
-VoltageTypes dischargeVoltageType = VOLTAGE_S;
+// IVT U1 averaged over the cell conversion, for the U1 vs sum-of-cells plausibility check. Under load
+// the pack voltage moves with the current, so both have to come from the same moment; conversions
+// during which the current moved more than CFG_PACK_V_PLAUSIBILITY_MAX_DI_A aren't used.
+static float measU1_V = 0.0f;
+static bool  measU1Valid = false;
 
-// Transaction staging prevents partially updated arrays being observed by ISR
-// telemetry/protection. Only a complete checked pass is published.
-static float pendingCells[TOTAL_AD68][TOTAL_CELL];
-static struct {
-    float v_temp[TOTAL_AD68][TOTAL_TEMP];
-    float v_segment[TOTAL_AD68], temp_ic[TOTAL_AD68];
-} pendingAux;
-
-static BMS_StatusTypeDef bms_acquisitionFailed(void);
-bool bms_checkRxFault(uint8_t data[TOTAL_IC][DATA_LEN], uint16_t pec[TOTAL_IC], uint8_t cc[TOTAL_IC]);
-
-static bool bms_cellDataFresh(VoltageTypes type)
+// Measurement data handed from the main loop to the CAN interrupt
+typedef struct
 {
-    return (unsigned int)type < TOTAL_CELL_VOLTAGE_TYPES && ic_common.cell_snapshot_valid[type]
-            && (uint32_t)(HAL_GetTick() - ic_common.cell_last_received_ms[type]) < BMS_ADBMS_CELL_MAX_AGE_MS;
-}
+    uint32_t id;
+    uint8_t  data[8];
+} CanFrame;
 
-static bool bms_auxDataFresh(void)
+typedef struct
 {
-    return ic_common.aux_snapshot_valid
-            && (uint32_t)(HAL_GetTick() - ic_common.aux_last_received_ms) < BMS_ADBMS_AUX_MAX_AGE_MS;
-}
+    float cellMin_V;
+    float cellMax_V;
+    float tempMin_C;
+    float tempMax_C;
+    float sumOfCells_V;
+} PackSummary;
 
-void BMS_GetAdbmsDataStatus(BMS_AdbmsDataStatus *status)
-{
-    status->cell_valid = bms_cellDataFresh(dischargeVoltageType);
-    status->aux_valid = bms_auxDataFresh();
-    status->cell_last_received_ms = ic_common.cell_last_received_ms[dischargeVoltageType];
-    status->aux_last_received_ms = ic_common.aux_last_received_ms;
-    status->last_acquisition_transport_fault = ic_common.last_acquisition_transport_fault;
-    status->last_pec_error = ic_common.last_pec_error;
-    status->last_counter_error = ic_common.last_counter_error;
-    status->counters = ic_common.last_counter_check;
-    status->discharge_stop_failed = ic_common.discharge_stop_failed;
-}
 
-BMS_StatusTypeDef BMS_CheckAdbmsData(void)
-{
-    return bms_cellDataFresh(dischargeVoltageType) && bms_auxDataFresh() ? BMS_OK : BMS_ERR_COMMS;
-}
+static Ic_common   ic_common;
+static Ic_ad68     ic_ad68;
+static Ic_ad68 committedAd68;
+static Ic_common committedCommon;
+static BMS_AcquisitionStatus acquisition;
+static BMS_CommandCounterChain failedCounterState;
+static volatile bool dischargeStopRequested;
+static uint32_t pecErrors[TOTAL_IC], counterErrors[TOTAL_IC];
 
-uint8_t  txData[TOTAL_IC][DATA_LEN];
-uint8_t  rxData[TOTAL_IC][DATA_LEN];
-uint16_t rxPec[TOTAL_IC];
-uint8_t  rxCc[TOTAL_IC];
+// isoSPI transfer buffers
+static uint8_t  txData[TOTAL_IC][DATA_LEN];
+static uint8_t  rxData[TOTAL_IC][DATA_LEN];
+static uint16_t rxPec[TOTAL_IC];
+static uint8_t  rxCc[TOTAL_IC];
 
-CanTxMsg canTxBuffer[CAN_BUFFER_LEN] = {0};
+// Double buffered: the main loop fills the back buffer, then swaps
+static CanFrame    measFrames[2][CAN_MEAS_FRAMES];
+static uint32_t    measFrameCount[2] = {0};
+static PackSummary packSummary[2] = {0};
+static volatile uint8_t measFront = 0;
 
-uint32_t BMS_StatusFlags = BMS_ERR_COMMS;          // Stores flags in bits
+static CanTxMsg canTxBuffer[CAN_BUFFER_LEN] = {0};
 
+static const uint8_t cellChannels[CFG_CELLS_PER_SLAVE] = CFG_SLAVE_CELL_CHANNELS;
+static const uint8_t tempGpios[CFG_TEMPS_PER_SLAVE]    = CFG_SLAVE_TEMP_GPIOS;
+
+static const uint8_t* const readSVoltageCmd[NUM_VOLTAGE_GROUPS] = { RDSVA, RDSVB, RDSVC, RDSVD, RDSVE, RDSVF };
+static const uint8_t* const readAuxCmd[NUM_AUX_GROUPS]          = { RDAUXA, RDAUXB, RDAUXC, RDAUXD, RDSTATA };
+
+static uint8_t voltageGroupMask = 0;   // S-ADC groups holding a used cell channel
+
+// Setpoints from the runtime settings (BMS_Settings_Get) every time the command is sent
 ChargerConfiguration chargerConfig = {
-        .max_current = BMS_MA_TO_A(BMS_CHARGER_MAX_CURRENT_MA),
-        .target_voltage = BMS_MV_TO_V(BMS_CHARGER_TARGET_MV),
+        .max_current = CFG_CHARGER_CURRENT_A,
+        .target_voltage = CFG_CHARGER_VOLTAGE_V,
         .disable_charging = 1,
 };
 
-static const float balancingThreshold = BMS_MV_TO_V(BMS_BALANCING_THRESHOLD_MV);
+static volatile bool enableBalancing = CFG_BALANCING_ENABLED;
 
-static const bool DEBUG_SERIAL_VOLTAGE_ENABLED = false;
-static const bool DEBUG_SERIAL_AUX_ENABLED = false;
+static bool     isDischargeActive = false;     // PWM discharge may be on: cleared once a stop went out without an SPI error
+static volatile uint32_t loopTimeMs = 0;
 
-volatile bool enableBalancing = BMS_BALANCING_ENABLED_DEFAULT;
-static volatile bool dischargeStopRequested;
 
-static void bms_clearDischargeState(void)
+void BMS_GetAcquisitionStatus(BMS_AcquisitionStatus *out)
 {
-    for (unsigned int ic = 0; ic < TOTAL_AD68; ic++) {
-        memset(&ic_ad68.pwma[ic], 0, sizeof(ic_ad68.pwma[ic]));
-        memset(&ic_ad68.pwmb[ic], 0, sizeof(ic_ad68.pwmb[ic]));
-        ic_ad68.cfb_Tx[ic].dcc = 0;
-        ic_ad68.cfb_Tx[ic].dcto = 0;
-        ic_ad68.cfb_Tx[ic].dtmen = 0;
-        ic_ad68.cfb_Tx[ic].dtrng = 0;
-        ic_ad68.isDischarging[ic] = 0;
-    }
+    uint32_t mask=__get_PRIMASK(); __disable_irq();
+    *out=acquisition;
+    uint32_t now=HAL_GetTick();
+    out->cellsValid=out->cellsValid && now-out->cellTick<CFG_MEAS_STALE_TIMEOUT_MS;
+    out->auxValid=out->auxValid && now-out->auxTick<CFG_MEAS_STALE_TIMEOUT_MS;
+    __set_PRIMASK(mask);
 }
-
-static void bms_sanitizeDischargeControls(void)
+bool BMS_ControlDataValid(void)
 {
-    if (!enableBalancing || !BMS_BALANCING_CONFIG_CONFIRMED || BMS_BALANCING_MAX_PWM == 0) {
-        bms_clearDischargeState();
-        return;
-    }
-    for (unsigned int ic = 0; ic < TOTAL_AD68; ic++) {
-        // Direct DCC overrides are never used, including populated positions.
-        ic_ad68.cfb_Tx[ic].dcc = 0;
-        ic_ad68.isDischarging[ic] &= BMS_POPULATED_CELL_MASK;
-        ic_ad68.pwma[ic].pwm9 = ic_ad68.pwma[ic].pwm10 = 0;
-        ic_ad68.pwma[ic].pwm11 = ic_ad68.pwma[ic].pwm12 = 0;
-        memset(&ic_ad68.pwmb[ic], 0, sizeof(ic_ad68.pwmb[ic]));
-#define CAP_PWM(n) if (ic_ad68.pwma[ic].pwm##n > BMS_BALANCING_MAX_PWM) ic_ad68.pwma[ic].pwm##n = BMS_BALANCING_MAX_PWM
-        CAP_PWM(1); CAP_PWM(2); CAP_PWM(3); CAP_PWM(4);
-        CAP_PWM(5); CAP_PWM(6); CAP_PWM(7); CAP_PWM(8);
-#undef CAP_PWM
-    }
+    BMS_AcquisitionStatus status; BMS_GetAcquisitionStatus(&status);
+    return status.cellsValid && status.auxValid && status.celsiusValid;
+}
+float BMS_GetMinCellTempC(void) { return packSummary[measFront].tempMin_C; }
+float BMS_GetMaxCellVoltageV(void) { return packSummary[measFront].cellMax_V; }
+void BMS_RequestSafeOutputs(void)
+{
+    chargerConfig.disable_charging=1;
+    dischargeStopRequested=true;
 }
 
 
-void bms_resetConfig(void)
-{
-    // Obtained from RDCFG after reset
-    // Flipped due to Little endian
-//    uint64_t const ad68_cfaDefault = 0x01 00 00 FF 03 00;
-    uint64_t const ad68_cfaDefault = 0x0003FF000000ULL | BMS_ADBMS_CS_COMPARISON_CODE;
-//    uint64_t const ad68_cfbDefault = 0x00 F8 7F 00 00 00;
-    uint64_t const ad68_cfbDefault = ((uint64_t)BMS_ADBMS_HW_VOV_CODE << 12) | BMS_ADBMS_HW_VUV_CODE;
+static float rawToVoltage(const uint8_t* p) {return BMS_ADC_Voltage(p);}
 
-    // Copy defaults to Tx Buffer
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+
+// Configuration registers as a device holds them after reset (read back with RDCFGA / RDCFGB)
+static void bms_resetConfig(void)
+{
+    static const uint8_t cfaReset[DATA_LEN] = { 0x01, 0x00, 0x00, 0xFF, 0x03, 0x00 };
+    static const uint8_t cfbReset[DATA_LEN] = { 0x00, 0xF8, 0x7F, 0x00, 0x00, 0x00 };
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        memcpy(&ic_ad68.cfa_Tx[ic], &ad68_cfaDefault, DATA_LEN);
-        memcpy(&ic_ad68.cfb_Tx[ic], &ad68_cfbDefault, DATA_LEN);
+        memcpy(&ic_ad68.cfa_Tx[ic], cfaReset, DATA_LEN);
+        memcpy(&ic_ad68.cfb_Tx[ic], cfbReset, DATA_LEN);
     }
-    bms_clearDischargeState();
-
-//    ad68_cfa_t ad68_cfaT;
-//    memcpy(&ad68_cfaT, &ad68_cfaDefault, DATA_LEN);
 }
 
 
-BMS_StatusTypeDef bms_writeRegister(RegisterTypes regType)
+// Writes one register group to every device
+static bool bms_writeRegister(RegisterTypes regType)
 {
-    bms_sanitizeDischargeControls();
-    uint8_t* command;
+    const uint8_t* command;
 
-    // Use a switch statement to handle the logic for each register type
     switch (regType)
     {
         case REG_CONFIG_A:
-            // Prepare data for writing to Configuration Register A
-            for (int ic = 0; ic < TOTAL_AD68; ic++) {
+            for (int ic = 0; ic < TOTAL_IC; ic++) {
                 memcpy(txData[ic], &ic_ad68.cfa_Tx[ic], DATA_LEN);
             }
-            command = WRCFGA; // Set the specific command for this operation
+            command = WRCFGA;
             break;
 
         case REG_CONFIG_B:
-            // Prepare data for writing to Configuration Register B
-            for (int ic = 0; ic < TOTAL_AD68; ic++) {
+            for (int ic = 0; ic < TOTAL_IC; ic++) {
                 memcpy(txData[ic], &ic_ad68.cfb_Tx[ic], DATA_LEN);
             }
-            command = WRCFGB; // Set the specific command for this operation
+            command = WRCFGB;
             break;
 
         case REG_PWM_A:
-            // Prepare data for writing to PWM Register Group A
-            for (int ic = 0; ic < TOTAL_AD68; ic++) {
+            for (int ic = 0; ic < TOTAL_IC; ic++) {
                 memcpy(txData[ic], &ic_ad68.pwma[ic], DATA_LEN);
             }
-            command = WRPWMA; // Set the specific command for this operation
+            command = WRPWMA;
             break;
 
         case REG_PWM_B:
-            // Prepare data for writing to PWM Register Group B
-            for (int ic = 0; ic < TOTAL_AD68; ic++) {
+            for (int ic = 0; ic < TOTAL_IC; ic++) {
                 memcpy(txData[ic], &ic_ad68.pwmb[ic], DATA_LEN);
             }
-            command = WRPWMB; // Set the specific command for this operation
+            command = WRPWMB;
             break;
 
         default:
-            // In case of an invalid regType
             Error_Handler();
-            return BMS_ERR_COMMS;
+            return false;
     }
 
-    // After preparing the buffer, transmit the data with the selected command.
-    // This part is common to all cases.
     return bms_transmitData(command, txData);
 }
 
 
-static void bms_invalidateAuxMeasurement(void)
+// GPO bits: 0 = pull-down on, 1 = pull-down off. Temperature inputs must stay at 1.
+static void bms_applyGpo(void)
 {
-    ic_common.aux_snapshot_valid = false;
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        for (int t = 0; t < TOTAL_TEMP; t++)
+        uint16_t gpo = 0x3FF;
+
+        if (BMS_PROFILE_LEDS_ENABLED && ic_ad68.ledRed[ic] == CFG_SLAVE_LED_ACTIVE_LOW)
         {
-            ic_ad68.v_temp[ic][t] = NAN;
-            ic_ad68.v_temp_diff[ic][t] = NAN;
-            ic_ad68.temp_cell[ic][t] = NAN;
-            ic_ad68.temp_input_valid[ic][t] = false;
-            ic_ad68.temp_valid[ic][t] = false;
+            BIT_CLEAR(gpo, CFG_SLAVE_LED_RED_GPIO - 1);
         }
-        ic_ad68.v_segment[ic] = NAN;
-        ic_ad68.temp_ic[ic] = NAN;
-        ic_ad68.v_segment_valid[ic] = false;
-        ic_ad68.temp_ic_valid[ic] = false;
-        ic_ad68.v_cell_sum[VOLTAGE_TEMP][ic] = NAN;
-        ic_ad68.v_cell_avg[VOLTAGE_TEMP][ic] = NAN;
-        ic_ad68.v_cell_min[VOLTAGE_TEMP][ic] = NAN;
-        ic_ad68.v_cell_max[VOLTAGE_TEMP][ic] = NAN;
-        ic_ad68.v_cell_delta[VOLTAGE_TEMP][ic] = NAN;
-    }
-}
-
-
-static void bms_invalidateCellVoltage(VoltageTypes type)
-{
-    ic_common.cell_snapshot_valid[type] = false;
-    for (unsigned int ic = 0; ic < TOTAL_AD68; ic++) {
-        for (unsigned int c = 0; c < TOTAL_CELL; c++) {
-            ic_ad68.v_cell[type][ic][c] = NAN;
-            ic_ad68.v_cell_diff[type][ic][c] = NAN;
+        if (BMS_PROFILE_LEDS_ENABLED && ic_ad68.ledGreen[ic] == CFG_SLAVE_LED_ACTIVE_LOW)
+        {
+            BIT_CLEAR(gpo, CFG_SLAVE_LED_GREEN_GPIO - 1);
         }
-        ic_ad68.v_cell_sum[type][ic] = NAN;
-        ic_ad68.v_cell_avg[type][ic] = NAN;
-        ic_ad68.v_cell_min[type][ic] = NAN;
-        ic_ad68.v_cell_max[type][ic] = NAN;
-        ic_ad68.v_cell_delta[type][ic] = NAN;
-    }
-    if (type == dischargeVoltageType) {
-        ic_common.cell_voltage_sum_valid = false;
-        ic_common.v_pack_total = ic_common.v_pack_min = ic_common.v_pack_max = NAN;
+
+        gpo |= BMS_TEMP_GPIO_MASK; // analogue inputs always released
+        ic_ad68.cfa_Tx[ic].gpo1to8  = gpo & 0xFF;
+        ic_ad68.cfa_Tx[ic].gpo9to10 = (gpo >> 8) & 0x3;
     }
 }
 
-static void bms_invalidateAllMeasurements(void)
+
+void BMS_SetSlaveLeds(uint8_t slave, bool red, bool green)
 {
-    uint32_t mask = bms_enterCritical();
-    for (int type = 0; type < TOTAL_CELL_VOLTAGE_TYPES; type++) bms_invalidateCellVoltage(type);
-    bms_invalidateAuxMeasurement();
-    bms_exitCritical(mask);
+    if (slave >= TOTAL_IC)
+    {
+        return;
+    }
+    ic_ad68.ledRed[slave]   = red;
+    ic_ad68.ledGreen[slave] = green;
+    committedAd68.ledRed[slave]=red; committedAd68.ledGreen[slave]=green;
 }
 
-static void bms_latchCommunicationFault(void)
+
+static BMS_StatusTypeDef bms_readRegister(RegisterTypes regType);
+static bool bms_stopDischarge(void);
+
+
+// C-ADC in continuous mode (datasheet "Cell Discharge with Cell Measurements and Diagnostics"): with RD = 0 and
+// CONT = 1, PWM discharge carries on and isn't affected by DCP
+static bool bms_startAdcvCont(void)
 {
-    bms_invalidateAllMeasurements();
-    enableBalancing = false;
-    for (unsigned int ic = 0; ic < TOTAL_IC; ic++) ic_common.isCommsError[ic] = true;
-    BMS_StatusFlags |= BMS_ERR_COMMS;
-    BMS_WriteFaultSignal(true);
-    if (BMS_IsCharging()) BMS_EnableCharging(false);
-    bms_clearDischargeState();
+    ADCV_t cmd = ADCV_default;
+    cmd.CONT = 1;
+    cmd.RSTF = 1;       // Reset the IIR filter
+    cmd.OW   = 0b00;
+    cmd.RD   = 0;
+
+    return bms_transmitCmd((const uint8_t *)&cmd);
 }
 
-static BMS_StatusTypeDef bms_acquisitionFailed(void)
-{
-    BMS_TransportFault primaryFault = bms_getTransportFault();
-    bool primaryPecError = primaryFault == BMS_TRANSPORT_OK && ic_common.last_pec_error;
-    bool primaryCounterError = primaryFault == BMS_TRANSPORT_OK && ic_common.last_counter_error;
-    BMS_CommandCounterChain primaryCounters;
-    bms_getCounterState(&primaryCounters);
-    bms_latchCommunicationFault();
-    // Foreground-only, finite best effort. A broken link cannot prove that the
-    // physical PWM/discharge registers were cleared; the fault output stays on.
-    bms_stopDischarge();
-    // Stop/readback transactions must not overwrite the acquisition diagnosis.
-    ic_common.last_acquisition_transport_fault = primaryFault;
-    ic_common.last_pec_error = primaryPecError;
-    ic_common.last_counter_error = primaryCounterError;
-    ic_common.last_counter_check = primaryCounters;
-    return BMS_ERR_COMMS;
-}
-
-static BMS_StatusTypeDef bms_synchronizeCounters(void)
-{
-    // Do not learn an arbitrary received value after MCU reset or a failed
-    // transaction. RSTCC leaves conversion/configuration registers untouched.
-    // Validate every device at zero, with PEC, before using the new baseline.
-    if (bms_transmitCmd(RSTCC) != BMS_OK
-            || bms_receiveData(RDSID, rxData, rxPec, rxCc) != BMS_OK
-            || bms_checkRxFault(rxData, rxPec, rxCc)) return BMS_ERR_COMMS;
-    return BMS_OK;
-}
 
 BMS_StatusTypeDef bms_init(void)
 {
-    bms_invalidateAllMeasurements();
-    enableBalancing = BMS_BALANCING_ENABLED_DEFAULT;
     bms_resetConfig();
 
-    // For 6830 Configs
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    voltageGroupMask = 0;
+    for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
+    {
+        voltageGroupMask |= (uint8_t)(1U << ((cellChannels[c] - 1) / 3));
+    }
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
         ic_ad68.cfa_Tx[ic].refon = 0b1;
-        ic_ad68.cfa_Tx[ic].fc = BMS_ADBMS_FILTER_CODE;
-        // Release the analog inputs; preserve GPIO1/2 (LED) control bits.
-        ic_ad68.cfa_Tx[ic].gpo1to8 |= 0xFC;
-        ic_ad68.cfa_Tx[ic].gpo9to10 |= 0x03;
+        ic_ad68.cfa_Tx[ic].fc = 0b001;    // IIR filter corner 110 Hz
     }
+    bms_applyGpo();
 
     printfDma("\n --- BMS INIT --- \n");
 
-    if (bms_wakeupChain() != BMS_OK) return bms_acquisitionFailed();
-    if (bms_synchronizeCounters() != BMS_OK)
+    if (!bms_wakeupChain() || !bms_transmitCmd(RSTCC)) return BMS_ERR_COMMS;
+    //                             // Command counters from 0 (checked on every read)
+    if (bms_readRegister(REG_SID) == BMS_ERR_COMMS)     // Every device answers
     {
-        return bms_acquisitionFailed();
+        return BMS_ERR_COMMS;
     }
 
-    if (bms_stopDischarge() != BMS_OK || bms_writeRegister(REG_CONFIG_A) != BMS_OK || bms_startAdcvCont(false) != BMS_OK)
-        return bms_acquisitionFailed();
-    if (bms_delayMsActive(BMS_CELL_INITIAL_FILL_MS) != BMS_OK) return bms_acquisitionFailed();
+    if (!bms_stopDischarge() || !bms_writeRegister(REG_CONFIG_A) || !bms_startAdcvCont())
+    {
+        return BMS_ERR_COMMS;
+    }
+    if (!bms_delayMsActive(12)) return BMS_ERR_COMMS; //              // First C-ADC results after 8 ms; keeps the isoSPI ports awake meanwhile
 
+    committedAd68=ic_ad68; committedCommon=ic_common;
     return BMS_OK;
 }
 
 
-void bms_printRawData(uint8_t data[TOTAL_IC][DATA_LEN], uint8_t cc[TOTAL_IC])
+static void bms_printRawData(uint8_t data[TOTAL_IC][DATA_LEN], const uint8_t cc[TOTAL_IC])
 {
     for (int ic = 0; ic < TOTAL_IC; ic++)
     {
         printfDma("IC%d: ", ic+1);
-        for (int j = 0; j < 6; j++)             // For every byte recieved (6 bytes)
+        for (int j = 0; j < DATA_LEN; j++)
         {
-            printfDma("0x%02X, ", data[ic][j]);    // Print each of the bytes
+            printfDma("0x%02X, ", data[ic][j]);
         }
         printfDma("CC: %d |   ", cc[ic]);
     }
@@ -433,7 +379,8 @@ void bms_printRawData(uint8_t data[TOTAL_IC][DATA_LEN], uint8_t cc[TOTAL_IC])
 }
 
 
-bool bms_checkRxFault(uint8_t data[TOTAL_IC][DATA_LEN], uint16_t pec[TOTAL_IC], uint8_t cc[TOTAL_IC])
+// PEC and command counter of a read. Marks the devices that failed in ic_common.isCommsError.
+static bool bms_checkRxFault(uint8_t data[TOTAL_IC][DATA_LEN], const uint16_t pec[TOTAL_IC], const uint8_t cc[TOTAL_IC])
 {
     bool faultDetected = false;
     bool* errorIndex = ic_common.isCommsError;
@@ -451,31 +398,43 @@ bool bms_checkRxFault(uint8_t data[TOTAL_IC][DATA_LEN], uint16_t pec[TOTAL_IC], 
         printfDma("\n");
         faultDetected = true;
     }
-    ic_common.last_pec_error = faultDetected;
 
-    // Check each PEC-verified counter; corrupt packets cannot synchronize or
-    // overwrite that device's last trusted observation. Reads do not increment.
-    faultDetected |= bms_checkRxCounter(cc, errorIndex, errorIndex);
-    bms_getCounterState(&ic_common.last_counter_check);
-    ic_common.last_counter_error = false;
-    for (unsigned int ic = 0; ic < TOTAL_IC; ic++) {
-        if (ic_common.last_counter_check.device[ic].fault) {
-            ic_common.last_counter_error = true;
-            printfDma("COUNTER ERROR IC%u: expected %u received %u synced %u\n",
-                    ic + 1, ic_common.last_counter_check.device[ic].expected,
-                    ic_common.last_counter_check.device[ic].received,
-                    ic_common.last_counter_check.device[ic].synchronized);
-        }
+    bool pecFailed[TOTAL_IC];
+    memcpy(pecFailed,errorIndex,sizeof(pecFailed));
+    bool counterFailed=bms_checkRxCounter(cc,pecFailed,errorIndex);
+    for (int ic=0;ic<TOTAL_IC;ic++) {
+        if (pecFailed[ic]) pecErrors[ic]++;
+        else if (errorIndex[ic]) counterErrors[ic]++;
     }
+    if (faultDetected) acquisition.pecFault=true;
+    if (counterFailed && !faultDetected) { acquisition.counterFault=true; printfDma("WARNING! COMMAND COUNTER MISMATCH\n"); }
+    faultDetected |= counterFailed;
     return faultDetected;
 }
 
 
-// used mostly for debugging purposes
-BMS_StatusTypeDef bms_readRegister(RegisterTypes regType)
+// Reads one register group from every device into rxData and checks the PECs and command counters
+static bool bms_readGroup(const uint8_t* cmd)
 {
-    char* title;
-    uint8_t* cmd;
+    if (!bms_receiveData(cmd, rxData, rxPec, rxCc))
+    {
+        for (int ic = 0; ic < TOTAL_IC; ic++)
+        {
+            ic_common.isCommsError[ic] = true;
+        }
+        printfDma("WARNING! SPI ERROR\n");
+        return false;
+    }
+
+    return !bms_checkRxFault(rxData, rxPec, rxCc);
+}
+
+
+// Reads a register group and prints it (start-up check and debugging)
+static BMS_StatusTypeDef bms_readRegister(RegisterTypes regType)
+{
+    const char* title;
+    const uint8_t* cmd;
     switch (regType)
     {
     case REG_CONFIG_A:
@@ -499,13 +458,13 @@ BMS_StatusTypeDef bms_readRegister(RegisterTypes regType)
         cmd = RDSID;
         break;
     default:
-        Error_Handler(); // Invalid Choice
-        break;
+        Error_Handler();
+        return BMS_ERR_COMMS;
     }
 
-    if (bms_receiveData(cmd, rxData, rxPec, rxCc) != BMS_OK || bms_checkRxFault(rxData, rxPec, rxCc))
+    if (!bms_readGroup(cmd))
     {
-        return bms_acquisitionFailed();
+        return BMS_ERR_COMMS;
     }
 
     printfDma("%s: \n", title);
@@ -515,111 +474,73 @@ BMS_StatusTypeDef bms_readRegister(RegisterTypes regType)
 }
 
 
-BMS_StatusTypeDef bms_startAdcvCont(bool enableRedundant)
+// Reads the S-ADC groups that hold used cells. vOut is indexed by channel (0 = C1).
+static BMS_StatusTypeDef bms_readSVoltages(float vOut[TOTAL_IC][NUM_CHANNELS])
 {
-    // 6830
-    // For DCP = 0
-    // If RD = 0 and CONT = 1, PWM discharge is unaffected
-    // If RD = 1 and CONT = 0, (Might be wrong) PWM discharge interrupted temporarily until RD conversion finished (8ms typ)
-    // If RD = 1 and CONT = 1, PWM discharge interrupted
-
-    ADCV.CONT = 1;      // Continuous
-    ADCV.DCP  = 0;      // Discharge permitted
-    ADCV.RSTF = 1;      // Reset filter
-    ADCV.OW   = 0b00;   // Open wire on C-ADCS and S-ADCs
-
-    ADCV.RD   = enableRedundant;      // Redundant Measurement
-
-    // Behaviour of 2950 (ADI1 Command)
-    //
-
-    return bms_transmitCmd((uint8_t *)&ADCV);
-}
-
-
-void bms_parseVoltage(const uint8_t rawData[TOTAL_IC][DATA_LEN], float vArr[TOTAL_AD68][TOTAL_CELL], uint8_t register_index)
-{
-    const int cell_index = register_index * 3;
-
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    for (int g = 0; g < NUM_VOLTAGE_GROUPS; g++)
     {
-        for (int word = 0; word < 3 && cell_index + word < TOTAL_CELL; word++)
+        if (!(voltageGroupMask & (1U << g)))
         {
-            const int offset = word * 2;
-            const int16_t rawVoltage = (int16_t)((uint16_t)rawData[ic][offset]
-                    | ((uint16_t)rawData[ic][offset + 1] << 8));
-            // Preserve double intermediates and round once at publication.
-            // Single-precision constants can change protection boundaries.
-            vArr[ic][cell_index + word] = rawVoltage == INT16_MIN ? NAN
-                    : (float)((double)rawVoltage * 0.00015 + 1.5);
-        }
-    }
-}
-
-
-static int16_t bms_auxRawWord(const uint8_t data[DATA_LEN], uint8_t offset)
-{
-    return (int16_t)((uint16_t)data[offset] | ((uint16_t)data[offset + 1] << 8));
-}
-
-
-void bms_parseAuxVoltage(const uint8_t rawData[TOTAL_IC][DATA_LEN], uint8_t group)
-{
-    // BMS-Slave-V3: logical TEMP1 through TEMP8, not GPIO-number order.
-    static const uint8_t tempGpio[TOTAL_TEMP] = {9, 7, 8, 10, 4, 6, 5, 3};
-
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
-    {
-        if (group == 4) // RDSTATA: internal die temperature, bytes 2-3.
-        {
-            const int16_t raw = bms_auxRawWord(rawData[ic], 2);
-            // ITMP powers up as 0x7FFF and is cleared to 0x8000.
-            // Retain the original double calculation, including the 70 C boundary.
-            pendingAux.temp_ic[ic] = (raw == INT16_MIN || raw == INT16_MAX)
-                    ? NAN : (float)(((double)raw * 0.00015 + 1.5) / 0.0075 - 273);
             continue;
         }
 
-        for (int t = 0; t < TOTAL_TEMP; t++)
+        if (!bms_readGroup(readSVoltageCmd[g]))
         {
-            const uint8_t gpioIndex = tempGpio[t] - 1;
-            if (gpioIndex / 3 == group)
-            {
-                const int16_t raw = bms_auxRawWord(rawData[ic], (gpioIndex % 3) * 2);
-                pendingAux.v_temp[ic][t] = (raw == INT16_MIN) ? NAN : raw * 0.00015 + 1.5;
-            }
+            return BMS_ERR_COMMS;
         }
 
-        if (group == 3) // RDAUXD: VPV is bytes 4-5; bytes 2-3 are VMV.
+        for (int ic = 0; ic < TOTAL_IC; ic++)
         {
-            const int16_t raw = bms_auxRawWord(rawData[ic], 4);
-            // The factor 25 is the device's internal V+ measurement scaling.
-            // Keep the existing scale and double intermediates; narrow once.
-            pendingAux.v_segment[ic] = (raw == INT16_MIN) ? NAN
-                    : (float)(((double)raw * 0.00015 + 1.5) * 25);
+            for (int k = 0; k < 3; k++)
+            {
+                int ch = g * 3 + k;
+                if (ch < NUM_CHANNELS)      // Group F only holds C16
+                {
+                    vOut[ic][ch] = rawToVoltage(&rxData[ic][k * 2]);
+                }
+            }
         }
     }
+    return BMS_OK;
 }
 
 
-void bms_calculateStats(VoltageTypes voltageType)
+// Single shot S-ADC conversion. PWM discharge pauses during the conversion (DCP = 0).
+static BMS_StatusTypeDef bms_convertS(uint8_t openWire, float vOut[TOTAL_IC][NUM_CHANNELS])
 {
-    const int channelCount = (voltageType == VOLTAGE_TEMP) ? TOTAL_TEMP : TOTAL_CELL;
+    ADSV_t cmd = ADSV_default;
+    cmd.CONT = 0;
+    cmd.DCP  = 0;
+    cmd.OW   = openWire;
+
+    if (!bms_transmitCmd((const uint8_t *)&cmd))
+    {
+        return BMS_ERR_COMMS;
+    }
+    if (!bms_transmitPoll(PLSADC, CFG_SADC_POLL_TIMEOUT_MS))
+    {
+        printfDma("WARNING! S-ADC POLL TIMEOUT\n");
+        return BMS_ERR_COMMS;
+    }
+    return bms_readSVoltages(vOut);
+}
+
+
+static void bms_calculateStats(void)
+{
     float total_voltage = 0;
     float pack_min =  999.0;
     float pack_max = -999.0;
 
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        float *vArr = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp[ic] : ic_ad68.v_cell[voltageType][ic];
-        float *vDiff = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp_diff[ic] : ic_ad68.v_cell_diff[voltageType][ic];
         float min =  999.0;
         float max = -999.0;
         float sum = 0;
 
-        for (int c = 0; c < channelCount; c++)
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
         {
-            float voltage = vArr[c];
+            float voltage = ic_ad68.v_cell[ic][c];
             sum += voltage;
             if (voltage > max)
             {
@@ -629,215 +550,147 @@ void bms_calculateStats(VoltageTypes voltageType)
             {
                 min = voltage;
             }
-            if (voltage > pack_max)
-            {
-                pack_max = voltage;
-            }
-            if (voltage < pack_min)
-            {
-                pack_min = voltage;
-            }
         }
 
         total_voltage += sum;
-        ic_ad68.v_cell_min  [voltageType][ic] = min;
-        ic_ad68.v_cell_max  [voltageType][ic] = max;
-        ic_ad68.v_cell_sum  [voltageType][ic] = sum;
-        ic_ad68.v_cell_avg  [voltageType][ic] = sum / channelCount;
-        ic_ad68.v_cell_delta[voltageType][ic] = max - min;
+        ic_ad68.v_cell_min[ic] = min;
+        ic_ad68.v_cell_max[ic] = max;
+        ic_ad68.v_cell_sum[ic] = sum;
 
-        for (int c = 0; c < channelCount; c++)
+        if (max > pack_max)
         {
-            vDiff[c] = vArr[c] - min;
+            pack_max = max;
+        }
+        if (min < pack_min)
+        {
+            pack_min = min;
         }
     }
 
-    if (voltageType == dischargeVoltageType)
-    {
-        ic_common.v_pack_total = total_voltage;
-        ic_common.v_pack_min = pack_min;
-        ic_common.v_pack_max = pack_max;
-    }
-
-    // Calculate voltage diff from the lowest voltage cell
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
-    {
-        float *vArr = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp[ic] : ic_ad68.v_cell[voltageType][ic];
-        float *vDiff = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp_diff[ic] : ic_ad68.v_cell_diff[voltageType][ic];
-        for (int c = 0; c < channelCount; c++)
-        {
-            vDiff[c] = vArr[c] - pack_min;
-        }
-    }
+    ic_common.v_pack_total = total_voltage;
+    ic_common.v_pack_min = pack_min;
+    ic_common.v_pack_max = pack_max;
 }
 
 
-void bms_printVoltage(VoltageTypes voltageType)
+static void bms_printVoltage(void)
 {
-    const int channelCount = (voltageType == VOLTAGE_TEMP) ? TOTAL_TEMP : TOTAL_CELL;
+    printfDma("S Voltage: \n");
 
-    char* title;
-    switch (voltageType)
-    {
-    case VOLTAGE_C:
-        title = "C Voltage";
-        break;
-    case VOLTAGE_C_AVG:
-        title = "C Average Voltage";
-        break;
-    case VOLTAGE_C_FIL:
-        title = "C Filtered Voltage";
-        break;
-    case VOLTAGE_S:
-        title = "S Voltage";
-        break;
-    case VOLTAGE_TEMP:
-        title = "Temperature Sensors Voltage";
-        break;
-    default:
-        Error_Handler();
-        break;
-    }
-    printfDma("%s: \n", title);
-
-    printfDma("| IC |");
-    for (int i = 0; i < channelCount; i++)
-    {
-        printfDma("   %2d   |", i+1);
-    }
-    printfDma("  Sum   |  Delta |\n");
-
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
-    {
-        float *vArr = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp[ic] : ic_ad68.v_cell[voltageType][ic];
-        float *vDev = (voltageType == VOLTAGE_TEMP) ? ic_ad68.v_temp_diff[ic] : ic_ad68.v_cell_diff[voltageType][ic];
-        uint8_t paddingOffset;
-        paddingOffset = printfDma("| %2d |", ic+1);
-        for (int c = 0; c < channelCount; c++)
-        {
-            printfDma("%8.5f|", vArr[c]);
-        }
-
-        printfDma("%8.5f|", ic_ad68.v_cell_sum  [voltageType][ic]);
-        printfDma("%8.5f|", ic_ad68.v_cell_delta[voltageType][ic]);
-        printfDma("\n");
-
-        printfDma("%*s", paddingOffset, "");
-        for (int c = 0; c < channelCount; c++)
-        {
-            printfDma("%8.5f|", vDev[c]);
-        }
-        printfDma("\n");
-    }
-}
-
-
-void bms_printTemps(void)
-{
-    printfDma("TEMPn: input V / acquisition valid / C valid (sensor model unconfirmed)\n");
-    printfDma("| IC |");
-    for (int i = 0; i < TOTAL_TEMP; i++)
-    {
-        printfDma("    TEMP%d V/A/C    |", i+1);
-    }
-    printfDma("  Die Temp / Segment Voltage");
-    printfDma("\n");
-
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
         printfDma("| %2d |", ic+1);
-        for (int c = 0; c < TOTAL_TEMP; c++)
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
         {
-            printfDma("%6.3f/%d/%d |", ic_ad68.v_temp[ic][c],
-                    ic_ad68.temp_input_valid[ic][c], ic_ad68.temp_valid[ic][c]);
+            printfDma("%7.4f|", ic_ad68.v_cell[ic][c]);
         }
-        printfDma("  %.2f C (valid %d) / %.2f V (valid %d)\n",
-                ic_ad68.temp_ic[ic], ic_ad68.temp_ic_valid[ic],
-                ic_ad68.v_segment[ic], ic_ad68.v_segment_valid[ic]);
+        printfDma(" Sum %7.3f | OW 0x%04X, intact ratio min %.3f\n", ic_ad68.v_cell_sum[ic], ic_ad68.isOpenWire[ic],
+                  ic_ad68.owRatioMin[ic]);
     }
 }
 
 
-uint8_t* readCellVoltageCmdList[TOTAL_CELL_VOLTAGE_TYPES][AD68_CELL_GROUP_COUNT] = {
-        {RDCVA, RDCVB, RDCVC}, // VOLTAGE_C
-        {RDACA, RDACB, RDACC}, // VOLTAGE_C_AVG
-        {RDFCA, RDFCB, RDFCC}, // VOLTAGE_C_FIL
-        {RDSVA, RDSVB, RDSVC}, // VOLTAGE_S
-};
-
-BMS_StatusTypeDef bms_readCellVoltage(VoltageTypes voltageType)
+static void bms_printTemps(void)
 {
-    if ((unsigned int)voltageType >= TOTAL_CELL_VOLTAGE_TYPES)
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        Error_Handler();
-        return BMS_ERR_VOLTAGE;
-    }
-    uint8_t** cmdList = readCellVoltageCmdList[voltageType];
-
-    for (int i = 0; i < AD68_CELL_GROUP_COUNT; i++)
-    {
-        if (bms_receiveData(cmdList[i], rxData, rxPec, rxCc) != BMS_OK || bms_checkRxFault(rxData, rxPec, rxCc))
+        printfDma("| %2d |", ic+1);
+        for (int t = 0; t < CFG_TEMPS_PER_SLAVE; t++)
         {
-            return bms_acquisitionFailed();
+            printfDma("%6.1f |", ic_ad68.temp_cell[ic][t]);
         }
-        bms_parseVoltage(rxData, pendingCells, i);
+        printfDma("  %.2f C  /  %.2f V \n", ic_ad68.temp_ic[ic], ic_ad68.v_segment[ic]);
     }
-    for (unsigned int ic = 0; ic < TOTAL_AD68; ic++)
-        for (unsigned int c = 0; c < TOTAL_CELL; c++)
-            if (!isfinite(pendingCells[ic][c])) return bms_acquisitionFailed();
-    uint32_t mask = bms_enterCritical();
-    memcpy(ic_ad68.v_cell[voltageType], pendingCells, sizeof(pendingCells));
-    bms_calculateStats(voltageType);
-    ic_common.cell_last_received_ms[voltageType] = HAL_GetTick();
-    ic_common.cell_snapshot_valid[voltageType] = true;
-    if (voltageType == dischargeVoltageType) ic_common.cell_voltage_sum_valid = true;
-    bms_exitCritical(mask);
-
-    if (DEBUG_SERIAL_VOLTAGE_ENABLED) bms_printVoltage(voltageType);
-
-    return BMS_OK;
 }
 
 
-BMS_StatusTypeDef bms_getAuxVoltage(void)
+// Cell voltages, plus the open wire check from the datasheet "Cell Open Wire Detection":
+// an S-ADC conversion with the even, then the odd open wire switches on. An intact input reads
+// about 90 % of normal, a broken one collapses towards 0 V.
+static BMS_StatusTypeDef bms_measureCells(void)
 {
-    uint8_t* cmdList[] = {RDAUXA, RDAUXB, RDAUXC, RDAUXD, RDSTATA};
+    static float vNormal[TOTAL_IC][NUM_CHANNELS];
+    static float vOwEven[TOTAL_IC][NUM_CHANNELS];
+    static float vOwOdd [TOTAL_IC][NUM_CHANNELS];
 
-    for (int i = 0; i < 5; i++)
+    BMS_IVT_SpanStart();
+    if (bms_convertS(0b00, vNormal))
     {
-        if (bms_receiveData(cmdList[i], rxData, rxPec, rxCc) != BMS_OK || bms_checkRxFault(rxData, rxPec, rxCc))
+        BMS_IVT_SpanEnd(NULL, NULL);
+        return BMS_ERR_COMMS;
+    }
+    float currentRange_A;
+    measU1Valid = BMS_IVT_SpanEnd(&measU1_V, &currentRange_A) && currentRange_A <= CFG_PACK_V_PLAUSIBILITY_MAX_DI_A;
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
+        {
+            float v=vNormal[ic][cellChannels[c]-1];
+            if (!isfinite(v)) return BMS_ERR_COMMS;
+            ic_ad68.v_cell[ic][c] = v;
+        }
+    }
+
+    if (CFG_OPEN_WIRE_CHECK_ENABLED)
+    {
+        if (bms_convertS(CFG_ADSV_OW_EVEN, vOwEven) || bms_convertS(CFG_ADSV_OW_ODD, vOwOdd))
         {
             return BMS_ERR_COMMS;
         }
-        bms_parseAuxVoltage(rxData, i);
+
+        for (int ic = 0; ic < TOTAL_IC; ic++)
+        {
+            uint16_t openWire = 0;
+            float ratioMin = 1.0f;
+            for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
+            {
+                int ch = cellChannels[c] - 1;
+                bool isEvenChannel = ((ch + 1) % 2) == 0;
+                float vOw = isEvenChannel ? vOwEven[ic][ch] : vOwOdd[ic][ch];
+
+                if (vOw < vNormal[ic][ch] * CFG_OPEN_WIRE_MIN_RATIO)
+                {
+                    BIT_SET(openWire, c);
+                }
+                else if (vNormal[ic][ch] > 0.5f && vOw / vNormal[ic][ch] < ratioMin)
+                {
+                    ratioMin = vOw / vNormal[ic][ch];
+                }
+            }
+            ic_ad68.isOpenWire[ic] = openWire;
+            ic_ad68.owRatioMin[ic] = ratioMin;
+        }
+    }
+
+    bms_calculateStats();
+
+    if (CFG_DEBUG_PRINT_CELLS)
+    {
+        bms_printVoltage();
     }
 
     return BMS_OK;
 }
 
 
-// Legacy reference only: the V3 sensor model/divider conversion is unconfirmed.
-// Do not call this table to produce a valid temperature for the new hardware.
-static float __attribute__((unused)) convertCellTemp(float cellVoltage)
+// Sensor voltage to temperature: linear between the points of CFG_TEMP_TABLE_V / _C (voltage falling as the
+// temperature rises). Outside the table: CFG_TEMP_INVALID_C.
+static float convertCellTemp(float cellVoltage)
 {
-    // NaN bypasses ordered comparisons and would overrun the legacy table.
-    // Keep it invalid; this function remains unused and unapproved for V3.
-    if (isnan(cellVoltage)) return NAN;
-
-    // From datasheet
-    static const float tempValues[]    = { -40,  -35,  -30,  -25,  -20,  -15,  -10,   -5,    0,    5,   10,   15,   20,   25,   30,   35,   40,   45,   50,   55,   60,   65,   70,   75,   80,   85,   90,   95,  100,  105,  110,  115,  120};
-    static const float voltageValues[] = {2.44, 2.42, 2.40, 2.38, 2.35, 2.32, 2.27, 2.23, 2.17, 2.11, 2.05, 1.99, 1.92, 1.86, 1.80, 1.74, 1.68, 1.63, 1.59, 1.55, 1.51, 1.48, 1.45, 1.43, 1.40, 1.38, 1.37, 1.35, 1.34, 1.33, 1.32, 1.31, 1.30};
+    static const float tempValues[]    = CFG_TEMP_TABLE_C;
+    static const float voltageValues[] = CFG_TEMP_TABLE_V;
     static const int   numDataPoints   = sizeof(tempValues) / sizeof(tempValues[0]);
+    _Static_assert(sizeof(tempValues) == sizeof(voltageValues), "Temperature table size mismatch");
 
-    // Check if in range
-    if (cellVoltage > 2.44 || cellVoltage < 1.30)
+    if (!isfinite(cellVoltage) || cellVoltage > voltageValues[0]+0.0000751f || cellVoltage < voltageValues[numDataPoints - 1]-0.0000751f)
     {
-        // Voltage out of range
-        return 888.0;
+        return CFG_TEMP_INVALID_C;      // Open or shorted sensor
     }
 
+    cellVoltage=fminf(voltageValues[0],fmaxf(voltageValues[numDataPoints-1],cellVoltage));
     int idx;
-    for (idx = 0; idx < numDataPoints - 1; idx++)
+    for (idx = 0; idx < numDataPoints - 2; idx++)
     {
         if (cellVoltage > voltageValues[idx + 1]) break;
     }
@@ -851,584 +704,756 @@ static float __attribute__((unused)) convertCellTemp(float cellVoltage)
 }
 
 
-BMS_StatusTypeDef bms_getAuxMeasurement(void)
+// The AUX ADC is separate from the S-ADCs (datasheet "Polling Methods"), so the temperature
+// conversion runs while the cell voltages are measured, and is collected afterwards.
+static BMS_StatusTypeDef bms_startAuxMeasurement(void)
 {
-    for (unsigned int ic = 0; ic < TOTAL_AD68; ic++) {
-        for (unsigned int t = 0; t < TOTAL_TEMP; t++) pendingAux.v_temp[ic][t] = NAN;
-        pendingAux.v_segment[ic] = pendingAux.temp_ic[ic] = NAN;
-    }
-    // One normal all-channel conversion; GPIO1/2 results are not temperatures.
-    ADAX.OW   = 0b0;
-    ADAX.CH   = 0b0000;
-    ADAX.CH4  = 0b0;
-    ADAX.PUP  = 0b0;
+    ADAX_t cmd = ADAX_default;     // All channels, no open wire current sources
 
-    if (bms_transmitCmd((uint8_t *)&ADAX) != BMS_OK || bms_transmitPoll(PLAUX1) != BMS_OK
-            || bms_getAuxVoltage() != BMS_OK)
+    if (!bms_transmitCmd((const uint8_t *)&cmd))
     {
-        // Discard the entire pass, including groups read before the failure.
-        return bms_acquisitionFailed();
+        return BMS_ERR_COMMS;
+    }
+    return BMS_OK;
+}
+
+
+static BMS_StatusTypeDef bms_readAuxMeasurement(void)
+{
+    static float vGpio[TOTAL_IC][NUM_GPIOS];
+
+    if (!bms_transmitPoll(PLAUX1, CFG_AUX_POLL_TIMEOUT_MS))
+    {
+        printfDma("WARNING! AUX POLL TIMEOUT\n");
+        return BMS_ERR_COMMS;
     }
 
-    // Celsius stays NAN/invalid until the sensor and conversion are confirmed.
-    bool allInputsValid = true;
-    uint32_t mask = bms_enterCritical();
-    bms_invalidateAuxMeasurement();
-    memcpy(ic_ad68.v_temp, pendingAux.v_temp, sizeof(pendingAux.v_temp));
-    memcpy(ic_ad68.v_segment, pendingAux.v_segment, sizeof(pendingAux.v_segment));
-    memcpy(ic_ad68.temp_ic, pendingAux.temp_ic, sizeof(pendingAux.temp_ic));
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    for (int g = 0; g < NUM_AUX_GROUPS; g++)
     {
-        for (int t = 0; t < TOTAL_TEMP; t++)
+        if (!bms_readGroup(readAuxCmd[g]))
         {
-            ic_ad68.temp_input_valid[ic][t] = isfinite(ic_ad68.v_temp[ic][t]);
-            allInputsValid &= ic_ad68.temp_input_valid[ic][t];
+            return BMS_ERR_COMMS;
         }
-        ic_ad68.v_segment_valid[ic] = isfinite(ic_ad68.v_segment[ic]);
-        ic_ad68.temp_ic_valid[ic] = isfinite(ic_ad68.temp_ic[ic]);
+
+        for (int ic = 0; ic < TOTAL_IC; ic++)
+        {
+            const uint8_t* data = rxData[ic];
+
+            if (g < AUX_GROUP_STATA)
+            {
+                for (int k = 0; k < 3; k++)
+                {
+                    int gpio = g * 3 + k;
+                    if (gpio < NUM_GPIOS)
+                    {
+                        vGpio[ic][gpio] = rawToVoltage(&data[k * 2]);
+                    }
+                }
+            }
+
+            if (g == AUX_GROUP_D)
+            {
+                ic_ad68.v_segment[ic] = rawToVoltage(&data[4]) * 25.0f;                // VPV
+            }
+            else if (g == AUX_GROUP_STATA)
+            {
+                int16_t raw=(int16_t)((uint16_t)data[2]|((uint16_t)data[3]<<8));
+                ic_ad68.temp_ic[ic] = raw==INT16_MIN || raw==INT16_MAX ? NAN
+                    : (float)(((double)raw*0.00015+1.5)/0.0075-273.0);       // ITMP
+            }
+        }
     }
-    // These statistics describe input volts, never degrees C.
-    if (allInputsValid) bms_calculateStats(VOLTAGE_TEMP);
-    ic_common.aux_last_received_ms = HAL_GetTick();
-    ic_common.aux_snapshot_valid = true;
-    bms_exitCritical(mask);
-    if (DEBUG_SERIAL_VOLTAGE_ENABLED)   bms_printVoltage(VOLTAGE_TEMP);
-    if (DEBUG_SERIAL_AUX_ENABLED)      bms_printTemps();
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        ic_ad68.raw_valid[ic]=ic_ad68.celsius_valid[ic]=0;
+        for (int t=0;t<CFG_TEMPS_PER_SLAVE;t++) {
+            float raw=vGpio[ic][tempGpios[t]-1];
+            ic_ad68.raw_aux[ic][t]=raw;
+            bool rawValid=isfinite(raw);
+            if (rawValid) ic_ad68.raw_valid[ic]|=(uint8_t)(1U<<t);
+            float c=BMS_PROFILE_CALIBRATION_CONFIRMED && rawValid ? convertCellTemp(raw) : NAN;
+            ic_ad68.temp_cell[ic][t]=c;
+            if (isfinite(c) && c!=CFG_TEMP_INVALID_C) ic_ad68.celsius_valid[ic]|=(uint8_t)(1U<<t);
+        }
+        if (!isfinite(ic_ad68.v_segment[ic]) || !isfinite(ic_ad68.temp_ic[ic])) return BMS_ERR_COMMS;
+    }
+
+    if (CFG_DEBUG_PRINT_TEMPS)
+    {
+        bms_printTemps();
+    }
 
     return BMS_OK;
 }
 
 
-void bms_setPwm(uint8_t ic_index, uint8_t cell, uint8_t dutyCycle)
+// Discharge duty (0..15) of one cell input (channel 0 = C1). PWM group A holds inputs 1-12, group B 13-16, two
+// per byte with the lower input in the low nibble (datasheet Tables 95, 96; the layout of ad68_pwma_t / _b_t).
+static void bms_setPwm(int ic, int channel, uint8_t dutyCycle)
 {
-    if (ic_index >= TOTAL_AD68 || cell >= AD68_HARDWARE_CELL_CHANNELS) return;
-    if (cell >= TOTAL_CELL || !enableBalancing || !BMS_BALANCING_CONFIG_CONFIRMED) dutyCycle = 0;
-    if (dutyCycle > BMS_BALANCING_MAX_PWM) dutyCycle = BMS_BALANCING_MAX_PWM;
-    cell++;                                 // Change from 0 indexing to 1 indexing
-
-    switch (cell) {
-        case 1:
-            ic_ad68.pwma[ic_index].pwm1 = dutyCycle;
-            break;
-        case 2:
-            ic_ad68.pwma[ic_index].pwm2 = dutyCycle;
-            break;
-        case 3:
-            ic_ad68.pwma[ic_index].pwm3 = dutyCycle;
-            break;
-        case 4:
-            ic_ad68.pwma[ic_index].pwm4 = dutyCycle;
-            break;
-        case 5:
-            ic_ad68.pwma[ic_index].pwm5 = dutyCycle;
-            break;
-        case 6:
-            ic_ad68.pwma[ic_index].pwm6 = dutyCycle;
-            break;
-        case 7:
-            ic_ad68.pwma[ic_index].pwm7 = dutyCycle;
-            break;
-        case 8:
-            ic_ad68.pwma[ic_index].pwm8 = dutyCycle;
-            break;
-        case 9:
-            ic_ad68.pwma[ic_index].pwm9 = dutyCycle;
-            break;
-        case 10:
-            ic_ad68.pwma[ic_index].pwm10 = dutyCycle;
-            break;
-        case 11:
-            ic_ad68.pwma[ic_index].pwm11 = dutyCycle;
-            break;
-        case 12:
-            ic_ad68.pwma[ic_index].pwm12 = dutyCycle;
-            break;
-        case 13:
-            ic_ad68.pwmb[ic_index].pwm13 = dutyCycle;
-            break;
-        case 14:
-            ic_ad68.pwmb[ic_index].pwm14 = dutyCycle;
-            break;
-        case 15:
-            ic_ad68.pwmb[ic_index].pwm15 = dutyCycle;
-            break;
-        case 16:
-            ic_ad68.pwmb[ic_index].pwm16 = dutyCycle;
-            break;
-        default:
-            // Handle invalid cases
-            break;
+    if (channel < 0 || channel >= NUM_CHANNELS)
+    {
+        return;
     }
+    uint8_t* group = (channel < 12) ? (uint8_t*)&ic_ad68.pwma[ic] : (uint8_t*)&ic_ad68.pwmb[ic];
+    int n = channel % 12;
+    int shift = (n % 2) * 4;
+    group[n / 2] = (uint8_t)((group[n / 2] & ~(0x0F << shift)) | ((dutyCycle & 0x0F) << shift));
 }
 
 
-/*
- * Converts delta threshold (threshold difference between all cell voltages)
- * to
- * discharge threshold (voltage at which cell stop discharging)
- */
-float bms_calculateBalancing(float deltaThreshold)
+// Balances the cells above dischargeThreshold
+static bool bms_startDischarge(float dischargeThreshold)
 {
-    float min = ic_common.v_pack_min;
-    float max = ic_common.v_pack_max;
-
-    if (max - min > deltaThreshold)
+    if (!BMS_CAN_BALANCE || !BMS_ControlDataValid() || !isfinite(dischargeThreshold)) return bms_stopDischarge();
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        return min + deltaThreshold;
-    }
-    else
-    {
-        return INFINITY; // No balancing required; the start guard requests a stop.
-    }
-}
-
-
-BMS_StatusTypeDef bms_startDischarge(float dischargeThreshold)
-{
-    if (!enableBalancing || !BMS_BALANCING_CONFIG_CONFIRMED || BMS_BALANCING_MAX_PWM == 0
-            || BMS_CheckAdbmsData() != BMS_OK || BMS_CheckPackSensor() != BMS_OK
-            || BMS_UpdateStatusFlags() != BMS_OK || !isfinite(dischargeThreshold)) return bms_stopDischarge();
-    bms_clearDischargeState();
-//    dischargeThreshold = 5;  // Overwrite the discharge aim voltage (for testing)
-    uint32_t cellDischargeCount;                    // Keep count of how many cells will be discharged per segment
-    uint8_t dutyCycle = 0;                          // 4 bit pwm at 937 ms
-    const uint16_t maxDischarge = BMS_BALANCING_PWM_BUDGET;
-
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
-    {
-        cellDischargeCount = 0;
-
-        for (int c = 0; c < TOTAL_CELL; c++)
+        memset(&ic_ad68.pwma[ic],0,sizeof(ic_ad68.pwma[ic]));
+        memset(&ic_ad68.pwmb[ic],0,sizeof(ic_ad68.pwmb[ic]));
+        ic_ad68.cfb_Tx[ic].dcc=0;
+        // A cell above the threshold starts balancing; one already balancing carries on until it's
+        // CFG_BALANCE_HYSTERESIS_V below it, so a cell sitting at the threshold doesn't switch every cycle.
+        // Power all discharging cells on this slave would dissipate at 100 % duty.
+        uint16_t balance = 0;
+        float fullDutyPower = 0;
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
         {
-            if (ic_ad68.v_cell[dischargeVoltageType][ic][c] > dischargeThreshold)
+            float v = ic_ad68.v_cell[ic][c];
+            bool was = BIT_CHECK(ic_ad68.isDischarging[ic], c);
+            if (v > dischargeThreshold || (was && v > dischargeThreshold - CFG_BALANCE_HYSTERESIS_V))
             {
-                cellDischargeCount++;
+                BIT_SET(balance, c);
+                fullDutyPower += v * v / CFG_BALANCE_RESISTOR_OHM;
             }
         }
 
-        if (cellDischargeCount == 0) {cellDischargeCount = 1; };
-
-        dutyCycle = maxDischarge / cellDischargeCount;
-        if (dutyCycle > BMS_BALANCING_MAX_PWM)
+        // 4 bit PWM, 937 ms period. Scale so the slave stays within its heat budget.
+        uint8_t dutyCycle = PWM_DUTY_MAX;
+        if (fullDutyPower > CFG_BALANCE_MAX_POWER_PER_SLAVE_W)
         {
-            dutyCycle = BMS_BALANCING_MAX_PWM;
+            dutyCycle = (uint8_t)(PWM_DUTY_MAX * CFG_BALANCE_MAX_POWER_PER_SLAVE_W / fullDutyPower);
         }
 
-        for (int c = 0; c < TOTAL_CELL; c++)
+        if (dutyCycle>CFG_BALANCE_MAX_PWM) dutyCycle=CFG_BALANCE_MAX_PWM;
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
         {
-            if (ic_ad68.v_cell[dischargeVoltageType][ic][c] > dischargeThreshold)
+            if (BIT_CHECK(balance, c) && dutyCycle > 0)
             {
-                printfDma("DISCHARGE: IC %d, CELL %d, DC %d \n", ic+1, c+1, dutyCycle);
                 BIT_SET(ic_ad68.isDischarging[ic], c);
-                bms_setPwm(ic, c, dutyCycle);
+                bms_setPwm(ic, cellChannels[c] - 1, dutyCycle);
             }
             else
             {
                 BIT_CLEAR(ic_ad68.isDischarging[ic], c);
-                bms_setPwm(ic, c, 0b0000);    // Turn off PWM discharge for that cell
+                bms_setPwm(ic, cellChannels[c] - 1, 0b0000);    // Turn off PWM discharge for that cell
             }
         }
 
-        // The PWM discharge functionality is possible in the standby, REF-UP, extended balancing and in the measure states
-        // AND while the discharge timeout has not expired (DCTO ≠ 0)
-        ic_ad68.cfb_Tx[ic].dcto = BMS_BALANCING_TIMEOUT_MINUTES;
-        ic_ad68.cfb_Tx[ic].dtmen = 0;    // Disables Discharge Timer Monitor (DTM)
-        // ic_ad68[0].cfb_Tx.dcc = 0b1; // --- High priority discharge (bypasses PWM)
+        // PWM discharge only runs while the discharge timer (DCTO, restarted by every WRCFGB) hasn't expired:
+        // if the BMS stops talking, the slaves stop balancing CFG_BALANCE_DCTO_MIN minutes later
+        ic_ad68.cfb_Tx[ic].dcto = CFG_BALANCE_DCTO_MIN;     // Minutes (DTRNG = 0)
+        ic_ad68.cfb_Tx[ic].dtmen = 0;                       // No discharge timer monitor
     }
 
-    // for testing -> enables discharge for cell 1
-//    printfDma("DISCHARGE: IC 1, CELL 1 \n");
-//    ic_ad68.pwma[0].pwm1 = 0b1111;
-
-    if (bms_writeRegister(REG_CONFIG_B) != BMS_OK || bms_writeRegister(REG_PWM_A) != BMS_OK
-            || bms_writeRegister(REG_PWM_B) != BMS_OK || bms_transmitCmd(UNMUTE) != BMS_OK)
-        return bms_acquisitionFailed();
-    return BMS_OK;
+    bool ok=bms_writeRegister(REG_CONFIG_B);
+    ok=bms_writeRegister(REG_PWM_A) && ok;
+    ok=bms_writeRegister(REG_PWM_B) && ok;
+    ok=bms_transmitCmd(UNMUTE) && ok;
+    isDischargeActive=false;
+    for(int ic=0;ic<TOTAL_IC;ic++) if(ic_ad68.isDischarging[ic]) isDischargeActive=true;
+    if (!ok) { (void)bms_stopDischarge(); return false; }
+    return true;
 }
 
 
-static BMS_StatusTypeDef bms_verifyDischargeOff(void)
+// All PWM duties and the discharge timer to 0. Returns false if a write failed (some slaves may still be
+// balancing): isDischargeActive stays set and the stop is sent again next cycle.
+static bool bms_stopDischarge(void)
 {
-    uint8_t *commands[] = {RDCFGB, RDPWMA, RDPWMB};
-    for (int group = 0; group < 3; group++) {
-        if (bms_receiveData(commands[group], rxData, rxPec, rxCc) != BMS_OK
-                || bms_checkRxFault(rxData, rxPec, rxCc)) return BMS_ERR_COMMS;
-        for (unsigned int ic = 0; ic < TOTAL_IC; ic++) {
-            // CFGB byte 3: discharge timer/mode; bytes 4-5: all DCC bits.
-            for (int byte = group == 0 ? 3 : 0; byte < DATA_LEN; byte++)
-                if (rxData[ic][byte] != 0) return BMS_ERR_COMMS;
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        for (int c = 0; c < NUM_CHANNELS; c++)
+        {
+            bms_setPwm(ic, c, 0b0000);
+        }
+        ic_ad68.isDischarging[ic] = 0;
+        ic_ad68.cfb_Tx[ic].dcto = 0;
+        ic_ad68.cfb_Tx[ic].dtmen = 0;
+        ic_ad68.cfb_Tx[ic].dcc=0;
+        ic_ad68.cfb_Tx[ic].dtrng=0;
+    }
+    bool ok=bms_transmitCmd(MUTE);
+    ok = bms_writeRegister(REG_CONFIG_B) && ok;
+    ok = bms_writeRegister(REG_PWM_A) && ok;
+    ok = bms_writeRegister(REG_PWM_B) && ok;
+    const uint8_t *reads[]={RDCFGB,RDPWMA,RDPWMB};
+    if (ok) for (int group=0;group<3;group++) {
+        if (!bms_readGroup(reads[group])) { ok=false; break; }
+        for (int ic=0;ic<TOTAL_IC;ic++)
+            for (int byte=group==0 ? 3 : 0;byte<DATA_LEN;byte++) if (rxData[ic][byte]!=0) ok=false;
+    }
+    if(ok)BMS_Health_ClearRecovered(BMS_ERR_BALANCE_STOP);
+    acquisition.stopFailed=!ok;
+    isDischargeActive=!ok && isDischargeActive;
+    dischargeStopRequested=false;
+    return ok;
+}
+
+
+void bms_softReset(void)
+{
+    acquisition.cellsValid=acquisition.auxValid=acquisition.celsiusValid=false;
+    if (!bms_wakeupChain() || !bms_transmitCmd(SRST)) BMS_RequestSafeOutputs(); //      // Every device to sleep, registers to their reset values
+    printfDma("\n  ---  SOFT RESET  ---  \n");
+}
+
+
+// Checks the latest measurements against the limits in bms_config.h.
+// Returns the violated BMS_StatusTypeDef bits; debouncing is done by the safety module.
+static uint32_t bms_evaluateLimits(void)
+{
+    const bool charging = BMS_IsCharging();
+    const float tempMin = charging ? CFG_CELL_CHARGE_TEMP_MIN_C : CFG_CELL_TEMP_MIN_C;
+    const float tempMax = charging ? CFG_CELL_CHARGE_TEMP_MAX_C : CFG_CELL_TEMP_MAX_C;
+
+    uint32_t flags = BMS_OK;
+    float tPackMin =  999.0;
+    float tPackMax = -999.0;
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        uint16_t cellFault = 0;
+        bool icFault = false;
+
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
+        {
+            float cellVoltage = ic_ad68.v_cell[ic][c];
+            if (!isfinite(cellVoltage) || cellVoltage > CFG_CELL_OV_V || cellVoltage < CFG_CELL_UV_V)
+            {
+                BIT_SET(cellFault, c);
+                flags |= BMS_ERR_VOLTAGE;
+                if(isfinite(cellVoltage))flags|=cellVoltage<CFG_CELL_UV_V ? BMS_ERR_CELL_UV:BMS_ERR_CELL_OV;
+            }
+
+            if (BIT_CHECK(ic_ad68.isOpenWire[ic], c))
+            {
+                BIT_SET(cellFault, c);
+                flags |= BMS_ERR_OPEN_WIRE;
+            }
+        }
+
+        for (int t = 0; t < CFG_TEMPS_PER_SLAVE; t++)
+        {
+            float cellTemp = ic_ad68.temp_cell[ic][t];
+            if (cellTemp > tPackMax) tPackMax = cellTemp;
+            if (cellTemp < tPackMin) tPackMin = cellTemp;
+
+            if (!(ic_ad68.celsius_valid[ic] & (1U<<t)) || !isfinite(cellTemp) || cellTemp > tempMax || cellTemp < tempMin)
+            {
+                /* TEMP connector index is not an assumed mechanical cell location. */
+                icFault = true;
+                flags |= BMS_ERR_TEMP;
+                if(charging)flags|=BMS_ERR_CHARGE_TEMP;
+            }
+        }
+
+        float icVoltage = ic_ad68.v_segment[ic];
+        if (icVoltage > CFG_SLAVE_V_MAX || icVoltage < CFG_SLAVE_V_MIN)
+        {
+            icFault = true;
+            flags |= BMS_ERR_VOLTAGE;
+        }
+
+        float icTemp = ic_ad68.temp_ic[ic];
+        if (icTemp > CFG_SLAVE_DIE_TEMP_MAX_C || icTemp < CFG_SLAVE_DIE_TEMP_MIN_C)
+        {
+            icFault = true;
+            flags |= BMS_ERR_TEMP;
+        }
+
+        // Only print faults when they appear, to keep the UART readable
+        uint16_t newCellFaults = cellFault & ~ic_ad68.isCellFaultDetected[ic];
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
+        {
+            if (BIT_CHECK(newCellFaults, c))
+            {
+                float temp = (c < CFG_TEMPS_PER_SLAVE) ? ic_ad68.temp_cell[ic][c] : 0;
+                printfDma("Cell outside limits (sample): SEG %d, CELL %d, %.3f V, %.1f C, OW %d\n", ic+1, c+1,
+                          ic_ad68.v_cell[ic][c], temp, BIT_CHECK(ic_ad68.isOpenWire[ic], c) ? 1 : 0);
+            }
+        }
+        if (icFault && !ic_common.isFaultDetected[ic])
+        {
+            printfDma("Slave outside limits (sample): SEG %d, %.2f V, die %.1f C\n", ic+1, icVoltage, icTemp);
+        }
+
+        ic_ad68.isCellFaultDetected[ic] = cellFault;
+        ic_common.isFaultDetected[ic] = icFault || (cellFault != 0);
+    }
+
+    ic_common.t_pack_min = tPackMin;
+    ic_common.t_pack_max = tPackMax;
+
+    return flags;
+}
+
+
+static void putInt16(uint8_t* p, int16_t value)
+{
+    p[0] = (uint8_t)(value & 0xFF);
+    p[1] = (uint8_t)((value >> 8) & 0xFF);
+}
+
+
+static void putInt32(uint8_t* p, int32_t value)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        p[i] = (uint8_t)((uint32_t)value >> (8 * i));
+    }
+}
+
+
+// Saturating; NaN (never expected) as "not available"
+static int16_t toInt16(float value)
+{
+    if (value != value)    return CAN_INVALID_INT16;
+    if (value > 32767.0f)  return 32767;
+    if (value < -32768.0f) return -32768;
+    return (int16_t)value;
+}
+
+
+// I x U1 in CFG_CAN_POWER_W_PER_BIT steps, rounded. Saturates at +-32767, so INT16_MIN only ever
+// means "not available".
+static int16_t powerToCan(const IvtReading* ivt)
+{
+    if (!ivt->powerFresh)
+    {
+        return CAN_INVALID_INT16;
+    }
+    float steps = ivt->power_W / CFG_CAN_POWER_W_PER_BIT;
+    if (steps >= 32767.0f)  return 32767;
+    if (steps <= -32767.0f) return -32767;
+    return (int16_t)lroundf(steps);
+}
+
+
+// Remaining energy in Wh, 0xFFFF until the start-up SoC estimate has been taken
+static uint16_t remainingToCan(const SocState* soc)
+{
+    if (!soc->valid)
+    {
+        return CAN_UNKNOWN_UINT16;
+    }
+    float wh = soc->remaining_Wh + 0.5f;
+    return wh >= (float)(CAN_UNKNOWN_UINT16 - 1) ? CAN_UNKNOWN_UINT16 - 1 : (uint16_t)wh;
+}
+
+
+// Builds the slave, cell voltage and temperature frames in the back buffer and hands it to the CAN interrupt
+static void bms_publishCanFrames(const BMS_AcquisitionStatus *next)
+{
+    uint8_t back = measFront ^ 1;
+    CanFrame* frames = measFrames[back];
+    uint32_t n = 0;
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        for(int k=0;k<CFG_CAN_T_FRAMES_PER_SLAVE;k++) {
+            CanFrame *raw=&frames[n++]; raw->id=CFG_CAN_ID_RAW_AUX_BASE+ic*CFG_CAN_T_FRAMES_PER_SLAVE+k;
+            for(int j=0;j<4;j++) {int t=k*4+j;putInt16(raw->data+j*2,t<CFG_TEMPS_PER_SLAVE && next->auxValid && (ic_ad68.raw_valid[ic]&(1U<<t)) ? toInt16(ic_ad68.raw_aux[ic][t]*1000):CAN_INVALID_INT16);}
+        }
+        CanFrame *diag=&frames[n++];diag->id=CFG_CAN_ID_DIAGNOSTIC_BASE+ic;
+        putInt16(diag->data,(int16_t)(pecErrors[ic]>65535?65535:pecErrors[ic]));putInt16(diag->data+2,(int16_t)(counterErrors[ic]>65535?65535:counterErrors[ic]));
+        diag->data[4]=next->auxValid?ic_ad68.raw_valid[ic]:0;diag->data[5]=next->auxValid?ic_ad68.celsius_valid[ic]:0;
+        diag->data[6]=(uint8_t)next->transportFault;diag->data[7]=next->stopFailed;
+        uint8_t isCommsError=ic_common.isCommsError[ic] || !next->cellsValid || !next->auxValid;
+        uint8_t isFaultDetected = ic_common.isFaultDetected[ic];
+
+        // --- SLAVE MESSAGE --- //
+        CanFrame* f = &frames[n++];
+        f->id = CFG_CAN_ID_SLAVE_BASE + ic;
+        putInt16(&f->data[0], toInt16(ic_ad68.v_segment[ic] * 100));        // 0.01 V
+        putInt16(&f->data[2], toInt16(ic_ad68.temp_ic[ic] * 10));           // 0.1 C
+        f->data[4] = (uint8_t)ic_ad68.isDischarging[ic];                    // Bit per cell
+        f->data[5] = (uint8_t)ic_ad68.isCellFaultDetected[ic];              // Bit per cell
+        f->data[6] = (uint8_t)ic_ad68.isOpenWire[ic];                       // Bit per cell
+        f->data[7] = (uint8_t)((isCommsError << 0) | (isFaultDetected << 1));
+
+        if (isCommsError)
+        {
+            continue; // Does not send cell voltage and temp as its invalid
+        }
+
+        // --- CELL VOLTAGE MESSAGES (4 cells per frame) --- //
+        for (int k = 0; k < CFG_CAN_V_FRAMES_PER_SLAVE; k++)
+        {
+            f = &frames[n++];
+            f->id = CFG_CAN_ID_CELL_V_BASE + ic * CFG_CAN_V_FRAMES_PER_SLAVE + k;
+            for (int j = 0; j < CAN_VALUES_PER_FRAME; j++)
+            {
+                int c = k * CAN_VALUES_PER_FRAME + j;
+                int16_t value = (c < CFG_CELLS_PER_SLAVE) ? toInt16(ic_ad68.v_cell[ic][c] * 1000) : CAN_INVALID_INT16;
+                putInt16(&f->data[j * 2], value);                           // mV
+            }
+        }
+
+        // --- CELL TEMPERATURE MESSAGES (4 sensors per frame) --- //
+        for (int k = 0; k < CFG_CAN_T_FRAMES_PER_SLAVE; k++)
+        {
+            f = &frames[n++];
+            f->id = CFG_CAN_ID_CELL_T_BASE + ic * CFG_CAN_T_FRAMES_PER_SLAVE + k;
+            for (int j = 0; j < CAN_VALUES_PER_FRAME; j++)
+            {
+                int t = k * CAN_VALUES_PER_FRAME + j;
+                int16_t value = (t < CFG_TEMPS_PER_SLAVE) ? toInt16((ic_ad68.celsius_valid[ic] & (1U<<t)) ? ic_ad68.temp_cell[ic][t]*10 : NAN) : CAN_INVALID_INT16;
+                putInt16(&f->data[j * 2], value);                           // 0.1 C
+            }
         }
     }
-    return BMS_OK;
-}
 
-BMS_StatusTypeDef bms_stopDischarge(void)
-{
-    bms_clearDischargeState();
-    // Try all zero writes even if an earlier transaction fails. Never recurse.
-    BMS_StatusTypeDef status = bms_transmitCmd(MUTE);
-    status |= bms_writeRegister(REG_CONFIG_B);
-    status |= bms_writeRegister(REG_PWM_A);
-    status |= bms_writeRegister(REG_PWM_B);
-    if (status == BMS_OK) status = bms_verifyDischargeOff();
-    ic_common.discharge_stop_failed = status != BMS_OK;
-    if (status != BMS_OK) bms_latchCommunicationFault();
-    dischargeStopRequested = false;
-    return status;
+    measFrameCount[back] = n;
+    packSummary[back].cellMin_V    = ic_common.v_pack_min;
+    packSummary[back].cellMax_V    = ic_common.v_pack_max;
+    packSummary[back].tempMin_C    = ic_common.t_pack_min;
+    packSummary[back].tempMax_C    = ic_common.t_pack_max;
+    packSummary[back].sumOfCells_V = ic_common.v_pack_total;
+
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    acquisition=*next;
+    measFront = back;
+    __set_PRIMASK(primask);
 }
 
 
-BMS_StatusTypeDef bms_softReset(void)
+static void setTxFrame(CanTxMsg* msg, uint32_t id, const uint8_t data[8])
 {
-    bms_invalidateAllMeasurements();
-    enableBalancing = false;
-    bms_clearDischargeState();
-    if (bms_wakeupChain() != BMS_OK) return bms_acquisitionFailed();
-    // Recovery must establish a known sequence before stop/readback, otherwise
-    // a previous sequence fault would prevent the reset that repairs it.
-    if (bms_synchronizeCounters() != BMS_OK) return bms_acquisitionFailed();
-    if (bms_stopDischarge() != BMS_OK) return BMS_ERR_COMMS;
-    if (bms_transmitCmd(SRST) != BMS_OK) return bms_acquisitionFailed();
-    printfDma("\n  ---  SOFT RESET  ---  \n");
-    return BMS_OK;
-}
-
-
-void BMS_GetPackMeasurements(BMS_PackMeasurements *measurements)
-{
-    BMS_CAN_GetIVTSnapshot(&measurements->ivt);
-    measurements->current_a = measurements->ivt.current.valid
-            ? measurements->ivt.current.raw_value / 1000.0f : NAN;
-    measurements->voltage_u1_v = measurements->ivt.u1.valid
-            ? measurements->ivt.u1.raw_value / 1000.0f : NAN;
-    measurements->cell_voltage_sum_valid = bms_cellDataFresh(dischargeVoltageType)
-            && ic_common.cell_voltage_sum_valid && isfinite(ic_common.v_pack_total);
-    measurements->cell_voltage_sum_v = measurements->cell_voltage_sum_valid ? ic_common.v_pack_total : NAN;
-    measurements->voltage_difference_v = measurements->ivt.u1.valid && measurements->cell_voltage_sum_valid
-            ? measurements->voltage_u1_v - measurements->cell_voltage_sum_v : NAN;
-}
-
-BMS_StatusTypeDef BMS_CheckPackSensor(void)
-{
-    IVTS_Snapshot sensor;
-    BMS_CAN_GetIVTSnapshot(&sensor);
-    return sensor.current.valid && sensor.u1.valid ? BMS_OK : BMS_ERR_IVT;
-}
-
-
-
-BMS_StatusTypeDef bms_balancingMeasureVoltage(void)
-{
-    // 6830
-    // ADSV For triggering single shot S conversion (stops PWM) while C in unaffected
-    // So this stops PWM and wait for S to finish
-    // Then read the S voltage
-    // Potential improvement: S vs C ADC comparison
-
-    ADSV.CONT = 0;      // Continuous
-    ADSV.DCP  = 0;      // Discharge permitted
-    ADSV.OW   = 0b00;   // Open wire on C-ADCS and S-ADCs
-
-    if (bms_transmitCmd((uint8_t *)&ADSV) != BMS_OK || bms_transmitPoll(PLSADC) != BMS_OK)
-        return bms_acquisitionFailed();
-    if (bms_readCellVoltage(dischargeVoltageType))
-    {
-        return BMS_ERR_COMMS;
-    }
-
-    return BMS_OK;
-}
-
-
-BMS_StatusTypeDef bms_startBalancing(float deltaThreshold)
-{
-    float dischargeThreshold = bms_calculateBalancing(deltaThreshold);
-    return bms_startDischarge(dischargeThreshold);
-}
-
-
-static bool bms_canTemperatureValid(float temperature, bool valid)
-{
-    // Reserve INT16_MIN for invalid data and avoid undefined float-to-int casts.
-    const float centidegrees = temperature * 100.0f;
-    return valid && isfinite(centidegrees)
-            && centidegrees >= -32767.0f && centidegrees <= 32767.0f;
+    msg->header.Identifier          = id;
+    msg->header.IdType              = FDCAN_EXTENDED_ID;
+    msg->header.TxFrameType         = FDCAN_DATA_FRAME;
+    msg->header.DataLength          = FDCAN_DLC_BYTES_8;
+    msg->header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    msg->header.BitRateSwitch       = FDCAN_BRS_OFF;
+    msg->header.FDFormat            = FDCAN_CLASSIC_CAN;
+    msg->header.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    msg->header.MessageMarker       = 0;
+    memcpy(msg->data, data, 8);
 }
 
 
 void BMS_GetCanData(CanTxMsg** buff, uint32_t* len)
 {
     uint32_t bufferlen = 0;
-    uint32_t id = BASE_CAN_ID;
-    FDCAN_TxHeaderTypeDef txHeader;
+    uint8_t  front = measFront;
+    uint8_t  data[8];
 
-    /* Prepare Tx Header */
-    txHeader.Identifier = id;
-    txHeader.IdType = FDCAN_EXTENDED_ID;
-    txHeader.TxFrameType = FDCAN_DATA_FRAME;
-    txHeader.DataLength = 8;
-    txHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    txHeader.BitRateSwitch = FDCAN_BRS_OFF;
-    txHeader.FDFormat = FDCAN_CLASSIC_CAN;
-    txHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-    txHeader.MessageMarker = 0;
+    // The TX FIFO sends in this order, so the pack-level frames go first in case a burst is cut short
 
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+    const PackSummary* summary = &packSummary[front];
+    IvtReading ivt = BMS_IVT_GetReading();
+
+    // --- PACK MESSAGE --- //
+    memset(data, 0, sizeof(data));
+    putInt16(&data[0], toInt16(ivt.voltageValid ? ivt.voltage_V * 10 : NAN));            // 0.1 V
+    putInt16(&data[2], toInt16(ivt.currentValid ? ivt.current_A * 10 : NAN));            // 0.1 A, positive = discharge
+    putInt16(&data[4], toInt16(summary->sumOfCells_V * 10));    // 0.1 V
+    data[6] = (uint8_t)((!ivt.currentValid << 0) | (!ivt.voltageValid << 1) | (ivt.sensorError << 2));
+    setTxFrame(&canTxBuffer[bufferlen++], CFG_CAN_ID_PACK, data);
+
+    // --- STATUS MESSAGE --- //
+    uint32_t age = BMS_Safety_GetMeasurementAgeMs();
+    InverterLimits limits = BMS_Inverter_GetLimits();
+    memset(data, 0, sizeof(data));
+    data[0] = (uint8_t)BMS_Safety_GetActiveFlags();
+    data[1] = (uint8_t)((BMS_Safety_IsFaultOutputActive() << 0) |
+                        (!BMS_Safety_IsFaultOutputActive() << 1) |     // TSAC ready relay
+                        (enableBalancing << 2) |
+                        (BMS_IsCharging() << 3) |
+                        (BMS_GPIO_IsSdcClosed() << 4) |
+                        (BMS_PROFILE_IS_BENCH << 5) |                    // Bench build
+                        (limits.tempDerating << 6) |                    // Inverter limits derated for temperature
+                        (limits.powerLimited << 7));                    // Inverter discharge held to the power limit
+    putInt16(&data[2], (int16_t)(age > 0x7FFF ? 0x7FFF : age));          // ms
+    putInt16(&data[4], (int16_t)(loopTimeMs > 0x7FFF ? 0x7FFF : loopTimeMs));
+    data[6] = (uint8_t)BMS_Precharge_GetState();
+    data[7] = BMS_Precharge_GetPercent();                               // U2 / U1 in %
+    setTxFrame(&canTxBuffer[bufferlen++], CFG_CAN_ID_STATUS, data);
+
+    // --- SUMMARY MESSAGE --- //
+    memset(data, 0, sizeof(data));
+    putInt16(&data[0], toInt16(summary->cellMin_V * 1000));     // mV
+    putInt16(&data[2], toInt16(summary->cellMax_V * 1000));     // mV
+    putInt16(&data[4], toInt16(summary->tempMin_C * 10));       // 0.1 C
+    putInt16(&data[6], toInt16(summary->tempMax_C * 10));       // 0.1 C
+    setTxFrame(&canTxBuffer[bufferlen++], CFG_CAN_ID_SUMMARY, data);
+
+    // --- ENERGY MESSAGE --- //
+    SocState soc = BMS_SoC_Get();
+    memset(data, 0, sizeof(data));
+    putInt16(&data[0], powerToCan(&ivt));                                               // + = discharge
+    putInt16(&data[2], (int16_t)remainingToCan(&soc));                                  // Wh, 0xFFFF = unknown
+    putInt16(&data[4], (int16_t)(uint16_t)(soc.valid ? soc.soc_percent * 10.0f + 0.5f : 0xFFFF));  // 0.1 %, 0xFFFF = unknown
+    putInt16(&data[6], toInt16(soc.used_Wh));                                           // Wh since start-up
+    setTxFrame(&canTxBuffer[bufferlen++], CFG_CAN_ID_ENERGY, data);
+
+    memset(data,0,8);data[0]=CFG_PROTOCOL_VERSION;data[1]=CFG_CONFIG_VERSION;data[2]=BMS_BOARD_PROFILE;data[3]=TOTAL_IC;data[4]=CFG_CELLS_PER_SLAVE;data[5]=CFG_TEMPS_PER_SLAVE;data[6]=NUM_CHANNELS;data[7]=BMS_PROFILE_IS_BENCH;
+    setTxFrame(&canTxBuffer[bufferlen++],CFG_CAN_ID_IDENTITY,data);
+    BMS_AcquisitionStatus a;BMS_GetAcquisitionStatus(&a);
+    memset(data,0,8);putInt32(data,(int32_t)BMS_Safety_GetActiveFlags());data[4]=(uint8_t)(a.cellsValid|(a.auxValid<<1)|(a.celsiusValid<<2)|(ivt.configurationVerified<<3)|(ivt.currentValid<<4)|(ivt.voltageValid<<5)|(ivt.voltage2Valid<<6)|(ivt.energyValid<<7));
+    putInt16(data+5,(int16_t)(age>65535?65535:age));data[7]=(uint8_t)a.generation;
+    setTxFrame(&canTxBuffer[bufferlen++],CFG_CAN_ID_QUALITY,data);
+    IVTS_Snapshot raw;BMS_IVT_GetSnapshot(&raw);memset(data,0,8);
+    data[0]=raw.current.raw_status;data[1]=raw.u1.raw_status;data[2]=raw.u2.raw_status;data[3]=raw.energy.raw_status;
+    data[4]=(uint8_t)(ivt.currentValid|(ivt.voltageValid<<1)|(ivt.voltage2Valid<<2)|(ivt.energyValid<<3)|(raw.transport_error<<4));data[5]=(uint8_t)raw.restart_epoch;
+    uint32_t gaps=raw.current.counter_gap_count+raw.u1.counter_gap_count+raw.u2.counter_gap_count+raw.energy.counter_gap_count;
+    putInt16(data+6,(int16_t)(gaps>65535?65535:gaps));setTxFrame(&canTxBuffer[bufferlen++],CFG_CAN_ID_IVT_DIAGNOSTIC,data);
+    memset(data,0,8);data[0]=chargerStatus.state;putInt16(data+1,(int16_t)chargerStatus.fault_bits);data[3]=(uint8_t)(BMS_Charger_Healthy()|(BMS_IsCharging()<<1));
+    putInt16(data+4,toInt16(chargerStatus.output_voltage*10));putInt16(data+6,toInt16(chargerStatus.output_current*10));setTxFrame(&canTxBuffer[bufferlen++],CFG_CAN_ID_CHARGER,data);
+
+    // --- SLAVE, CELL VOLTAGE AND TEMPERATURE MESSAGES (from the last measurement cycle) --- //
+    for (uint32_t i = 0; i < measFrameCount[front]; i++)
     {
-        const bool cellValid = bms_cellDataFresh(dischargeVoltageType);
-        const bool auxFresh = bms_auxDataFresh();
-        const bool vpvValid = auxFresh && ic_ad68.v_segment_valid[ic] && isfinite(ic_ad68.v_segment[ic]);
-        const bool dieTempValid = bms_canTemperatureValid(ic_ad68.temp_ic[ic], auxFresh && ic_ad68.temp_ic_valid[ic]);
-        int32_t v_segment       = vpvValid ? (int32_t)(ic_ad68.v_segment[ic] * 1000) : INT32_MIN;
-        int16_t temp_ic         = dieTempValid ? (int16_t)(ic_ad68.temp_ic[ic] * 100) : INT16_MIN;
-        uint8_t isCommsError    = ic_common.isCommsError[ic] || !cellValid || !auxFresh;
-        uint8_t isFaultDetected = ic_common.isFaultDetected[ic];
-
-        memcpy(&canTxBuffer[bufferlen].data[0], &v_segment, 4);
-//        canTxBuffer[bufferlen].data[4] = (uint8_t)(temp_ic & 0xFF);
-//        canTxBuffer[bufferlen].data[5] = (uint8_t)((temp_ic >> 8) & 0xFF);
-        memcpy(&canTxBuffer[bufferlen].data[4], &temp_ic, 2);
-        canTxBuffer[bufferlen].data[6] = (uint8_t)((isCommsError << 0) | (isFaultDetected << 1));
-        canTxBuffer[bufferlen].data[7] = (vpvValid ? BMS_CAN_VPV_VALID : 0)
-                | (dieTempValid ? BMS_CAN_DIE_TEMP_VALID : 0)
-                | (cellValid ? BMS_CAN_CELL_VOLTAGE_VALID : 0);
-
-        txHeader.Identifier = BMS_BOARD_CAN_ID_FIRST + ic;
-        canTxBuffer[bufferlen].header = txHeader;
-        bufferlen++;
-
-        for (int c = 0; c < TOTAL_CELL; c++)
-        {
-            int16_t cellVoltage = cellValid ? (int16_t)(ic_ad68.v_cell[dischargeVoltageType][ic][c] * 1000) : INT16_MIN;
-            int16_t voltageDiff = cellValid ? (int16_t)(ic_ad68.v_cell_diff[dischargeVoltageType][ic][c] * 1000) : INT16_MIN;
-            const bool tempValid = bms_canTemperatureValid(ic_ad68.temp_cell[ic][c], auxFresh && ic_ad68.temp_valid[ic][c]);
-            int16_t cellTemp    = tempValid ? (int16_t)(ic_ad68.temp_cell[ic][c] * 100) : INT16_MIN;
-            uint8_t isDischarging       = ((ic_ad68.isDischarging[ic]       >> c) & 0x01U);
-            uint8_t isCellFaultDetected = ((ic_ad68.isCellFaultDetected[ic] >> c) & 0x01U);
-
-            canTxBuffer[bufferlen].data[0] = (uint8_t)(cellVoltage & 0xFF);
-            canTxBuffer[bufferlen].data[1] = (uint8_t)((cellVoltage >> 8) & 0xFF);
-            canTxBuffer[bufferlen].data[2] = (uint8_t)(voltageDiff & 0xFF);
-            canTxBuffer[bufferlen].data[3] = (uint8_t)((voltageDiff >> 8) & 0xFF);
-            canTxBuffer[bufferlen].data[4] = (uint8_t)(cellTemp & 0xFF);
-            canTxBuffer[bufferlen].data[5] = (uint8_t)((cellTemp >> 8) & 0xFF);
-            canTxBuffer[bufferlen].data[6] = (uint8_t)((isDischarging << 0) | (isCellFaultDetected << 1));
-            // TEMPn shares the existing cell-n slot; this is not a claim about
-            // where that sensor is physically attached within the segment.
-            canTxBuffer[bufferlen].data[7] = (auxFresh && ic_ad68.temp_input_valid[ic][c] ? BMS_CAN_TEMP_INPUT_VALID : 0)
-                    | (tempValid ? BMS_CAN_TEMP_C_VALID : 0)
-                    | (cellValid ? BMS_CAN_CELL_VOLTAGE_VALID : 0);
-
-            uint32_t id_cell_offset = ic*TOTAL_CELL + c;
-
-            txHeader.Identifier = id + id_cell_offset;
-            canTxBuffer[bufferlen].header = txHeader;
-            bufferlen++;
-        }
+        setTxFrame(&canTxBuffer[bufferlen++], measFrames[front][i].id, measFrames[front][i].data);
     }
-
-    BMS_PackMeasurements pack;
-    BMS_GetPackMeasurements(&pack);
-    const IVTS_Result *results[] = {&pack.ivt.current, &pack.ivt.u1};
-    for (int channel = 0; channel < 2; channel++) {
-        const IVTS_Result *result = results[channel];
-        int32_t value = result->valid ? result->raw_value : INT32_MIN;
-        // Vehicle payload is little-endian, independently of IVT wire format.
-        memcpy(canTxBuffer[bufferlen].data, &value, 4);
-        canTxBuffer[bufferlen].data[4] = result->raw_status;
-        canTxBuffer[bufferlen].data[5] = result->counter;
-        canTxBuffer[bufferlen].data[6] = (result->valid ? BMS_PACK_VALID : 0)
-                | (result->stale ? BMS_PACK_STALE : 0)
-                | (result->received ? BMS_PACK_RECEIVED : 0)
-                | (pack.ivt.configuration_verified ? BMS_PACK_CONFIG_VERIFIED : 0);
-        canTxBuffer[bufferlen].data[7] = 0;
-        txHeader.Identifier = BMS_PACK_CURRENT_CAN_ID + channel;
-        canTxBuffer[bufferlen++].header = txHeader;
-    }
-    int32_t cellSum = pack.cell_voltage_sum_valid ? (int32_t)(pack.cell_voltage_sum_v * 1000) : INT32_MIN;
-    const int64_t differenceMv = (int64_t)pack.ivt.u1.raw_value - cellSum;
-    int32_t difference = pack.ivt.u1.valid && pack.cell_voltage_sum_valid
-            && differenceMv > INT32_MIN && differenceMv <= INT32_MAX ? (int32_t)differenceMv : INT32_MIN;
-    memcpy(canTxBuffer[bufferlen].data, &cellSum, 4);
-    memcpy(canTxBuffer[bufferlen].data + 4, &difference, 4);
-    txHeader.Identifier = BMS_PACK_CROSSCHECK_CAN_ID;
-    canTxBuffer[bufferlen++].header = txHeader;
-
-    // --- CHARGER CONFIG CAN MESSAGE --- //
-    BMS_CAN_GetChargerMsg(&chargerConfig, canTxBuffer[bufferlen].data);
-    txHeader.Identifier = CHARGER_CONFIG_CAN_ID;
-    canTxBuffer[bufferlen].header = txHeader;
-    bufferlen++;
 
     *len = bufferlen;
     *buff = canTxBuffer;
 }
 
 
-BMS_StatusTypeDef BMS_CheckTemps(void)
+// Hottest cell of the last measurement cycle
+float BMS_GetMaxCellTempC(void)
 {
-    return (BMS_StatusFlags & BMS_ERR_TEMP);
-}
-
-BMS_StatusTypeDef BMS_CheckVoltage(void)
-{
-    return (BMS_StatusFlags & BMS_ERR_VOLTAGE);
-}
-
-BMS_StatusTypeDef BMS_CheckCurrent(void)
-{
-    IVTS_Snapshot sensor;
-    BMS_CAN_GetIVTSnapshot(&sensor);
-    if (!sensor.current.valid || sensor.current.raw_value < BMS_PACK_CURRENT_MIN_MA
-            || sensor.current.raw_value > BMS_PACK_CURRENT_MAX_MA) return BMS_ERR_CURRENT;
-    return (BMS_StatusFlags & BMS_ERR_CURRENT);
-}
-
-BMS_StatusTypeDef BMS_CheckCommsFault(void)
-{
-    return (BMS_StatusFlags & BMS_ERR_COMMS) | BMS_CheckAdbmsData();
-}
-
-void BMS_SetCommsFault(bool state)
-{
-    if (state)
-        BMS_StatusFlags |= BMS_ERR_COMMS;   // Set fault
-    else
-        BMS_StatusFlags &= ~BMS_ERR_COMMS;  // Clear fault
+    return BMS_ControlDataValid() ? packSummary[measFront].tempMax_C : NAN;
 }
 
 
-BMS_StatusTypeDef BMS_UpdateStatusFlags(void)
+// Charger command for CAN3, sent with every CAN1 burst
+void BMS_GetChargerCanMsg(CanTxMsg* msg)
 {
-    const float MAX_PACK_VOLTAGE = BMS_MV_TO_V(BMS_PACK_OV_MV);
-    const float MIN_PACK_VOLTAGE = BMS_MV_TO_V(BMS_PACK_UV_MV);
+    uint8_t data[8];
+    BmsSettings settings = BMS_Settings_Get();
+    chargerConfig.max_current    = settings.chargeCurrent_A;
+    chargerConfig.target_voltage = settings.chargeVoltage_V;
+    BMS_CAN_GetChargerMsg(&chargerConfig, data);
+    setTxFrame(msg, CHARGER_CONFIG_CAN_ID, data);
+}
 
-    const float MAX_CURRENT = BMS_MA_TO_A(BMS_PACK_CURRENT_MAX_MA);
-    const float MIN_CURRENT = BMS_MA_TO_A(BMS_PACK_CURRENT_MIN_MA);
 
-    const float MAX_VOLTAGE = BMS_MV_TO_V(BMS_CELL_OV_MV);
-    const float MIN_VOLTAGE = BMS_MV_TO_V(BMS_CELL_UV_MV);
+// Fast frames, built in the timer interrupt every CFG_CAN_FAST_PERIOD_MS from the latest IVT values.
+// Current and voltages at the IVT's own resolution (1 mA, 1 mV); INT32_MIN / INT16_MIN = not available.
+uint32_t BMS_GetFastCanData(CanTxMsg msgs[CAN_FAST_FRAME_COUNT])
+{
+    IvtReading ivt = BMS_IVT_GetReading();
+    SocState   soc = BMS_SoC_Get();
+    uint8_t    data[8];
 
-    const float MAX_IC_VOLTAGE = BMS_MV_TO_V(BMS_BOARD_OV_MV);
-    const float MIN_IC_VOLTAGE = BMS_MV_TO_V(BMS_BOARD_UV_MV);
+    putInt32(&data[0], ivt.currentValid ? ivt.current_mA : CAN_INVALID_INT32);      // mA, + = discharge
+    putInt32(&data[4], ivt.voltageValid ? ivt.voltage_mV : CAN_INVALID_INT32);      // mV, U1 = pack
+    setTxFrame(&msgs[0], CFG_CAN_ID_FAST_1, data);
 
-    const float MAX_TEMP = BMS_TEMP_MAX_C;
-    const float MIN_TEMP = BMS_TEMP_MIN_C;
+    putInt32(&data[0], ivt.voltage2Valid ? ivt.voltage2_mV : CAN_INVALID_INT32);    // mV, U2 = vehicle side
+    putInt16(&data[4], powerToCan(&ivt));                                           // + = discharge
+    putInt16(&data[6], (int16_t)remainingToCan(&soc));                              // Wh, 0xFFFF = unknown
+    setTxFrame(&msgs[1], CFG_CAN_ID_FAST_2, data);
 
-    const float MAX_IC_TEMP = BMS_DIE_TEMP_MAX_C;
-    const float MIN_IC_TEMP = BMS_DIE_TEMP_MIN_C;
+    return CAN_FAST_FRAME_COUNT;
+}
 
-    BMS_StatusTypeDef status = BMS_OK;
-    BMS_StatusTypeDef returnStatus = BMS_OK;
-    const bool cellFresh = bms_cellDataFresh(dischargeVoltageType);
-    const bool auxFresh = bms_auxDataFresh();
-    if (!cellFresh || !auxFresh) returnStatus |= BMS_ERR_COMMS;
 
-    BMS_PackMeasurements pack;
-    BMS_GetPackMeasurements(&pack);
-    if (!pack.ivt.u1.valid || pack.voltage_u1_v > MAX_PACK_VOLTAGE || pack.voltage_u1_v < MIN_PACK_VOLTAGE)
-        returnStatus |= BMS_ERR_VOLTAGE;
-    // Preserve the signed sensor current. The existing limits are symmetric;
-    // this does not assign positive current to charge or discharge.
-    if (!pack.ivt.current.valid || pack.current_a > MAX_CURRENT || pack.current_a < MIN_CURRENT)
-        returnStatus |= BMS_ERR_CURRENT;
-    if (!pack.ivt.current.valid || !pack.ivt.u1.valid) returnStatus |= BMS_ERR_IVT;
+uint32_t BMS_GetLoopTimeMs(void)
+{
+    return loopTimeMs;
+}
 
-    for (int ic = 0; ic < TOTAL_AD68; ic++)
+
+// Mean of the cells inside CFG_SOC_CELL_MIN_V..MAX_V, as the Battery Tracker's Pack SoC
+static bool bms_meanCellVoltage(float* mean)
+{
+    float sum = 0;
+    int count = 0;
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        // TEMPn is a logical connector index, independent of sensor placement.
-        for (int c = 0; c < TOTAL_TEMP; c++)
+        for (int c = 0; c < CFG_CELLS_PER_SLAVE; c++)
         {
-            float cellTemp = ic_ad68.temp_cell[ic][c];
-
-            if (c < TOTAL_CELL)
+            float v = ic_ad68.v_cell[ic][c];
+            if (v > CFG_SOC_CELL_MIN_V && v < CFG_SOC_CELL_MAX_V)
             {
-                float cellVoltage = ic_ad68.v_cell[dischargeVoltageType][ic][c];
-                if (!cellFresh || !isfinite(cellVoltage) || cellVoltage > MAX_VOLTAGE || cellVoltage < MIN_VOLTAGE)
-                {
-                    printfDma("CELL VOLTAGE FAULT: SEG %d, CELL %d, %f \n", ic+1, c+1, cellVoltage);
-                    BIT_SET(ic_ad68.isCellFaultDetected[ic], c);
-                    status |= BMS_ERR_VOLTAGE;
-                }
+                sum += v;
+                count++;
             }
-
-            if (!auxFresh || !ic_ad68.temp_valid[ic][c] || !isfinite(cellTemp)
-                    || cellTemp > MAX_TEMP || cellTemp < MIN_TEMP)
-            {
-                printfDma("TEMP FAULT: SEG %d, TEMP%d, valid %d, %f C\n",
-                        ic+1, c+1, ic_ad68.temp_valid[ic][c], cellTemp);
-                BIT_SET(ic_ad68.isCellFaultDetected[ic], c);
-                status |= BMS_ERR_TEMP;
-            }
-
-            if (status == BMS_OK)
-            {
-                BIT_CLEAR(ic_ad68.isCellFaultDetected[ic], c);
-            }
-
-            returnStatus |= status;
-            status = BMS_OK;
         }
-
-        float icVoltage = ic_ad68.v_segment[ic];
-        float icTemp = ic_ad68.temp_ic[ic];
-
-        if (!auxFresh || !ic_ad68.v_segment_valid[ic] || !isfinite(icVoltage)
-                || icVoltage > MAX_IC_VOLTAGE || icVoltage < MIN_IC_VOLTAGE)
-        {
-            printfDma("IC VOLTAGE FAULT: SEG %d, %f \n", ic+1, icVoltage);
-            ic_common.isFaultDetected[ic] = true;
-            status |= BMS_ERR_VOLTAGE;
-        }
-
-        if (!auxFresh || !ic_ad68.temp_ic_valid[ic] || !isfinite(icTemp)
-                || icTemp > MAX_IC_TEMP || icTemp < MIN_IC_TEMP)
-        {
-            printfDma("IC TEMP FAULT: SEG %d, %f \n", ic+1, icTemp);
-            ic_common.isFaultDetected[ic] = true;
-            status |= BMS_ERR_TEMP;
-        }
-
-        if (status == BMS_OK)
-        {
-            ic_common.isFaultDetected[ic] = false;
-        }
-
-        returnStatus |= status;
-        status = BMS_OK;
     }
-
-    BMS_StatusFlags = returnStatus;
-    return returnStatus;
+    *mean = count > 0 ? sum / (float)count : 0.0f;
+    return count > 0;
 }
 
+
+// Reads configuration register A back: REFON is set from bms_init on, so a slave reading it off has been reset
+// (power or sleep). Found on the bench: its readings carry on, PECs and command counters fine, with its C-ADC
+// stopped. Returns false if the read failed.
+static bool bms_findResetSlaves(bool* anyReset)
+{
+    *anyReset = false;
+    if (!bms_readGroup(RDCFGA))
+    {
+        return false;
+    }
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        if (!(rxData[ic][0] & CFGA0_REFON))
+        {
+            printfDma("Slave %d was reset (supply dip?): configuration and C-ADC restored\n", ic + 1);
+            *anyReset = true;
+        }
+    }
+    return true;
+}
+
+
+static bool bms_isBalancingAllowed(uint32_t limitFlags)
+{
+    if (!CFG_BALANCING_ENABLED || !enableBalancing)
+    {
+        return false;
+    }
+    if (CFG_BALANCE_ONLY_WHILE_CHARGING && !BMS_IsCharging())
+    {
+        return false;
+    }
+    IvtReading ivt=BMS_IVT_GetReading();
+    // Only if every asynchronous control input is usable.
+    return ivt.currentValid && ivt.voltageValid && BMS_CAN_BALANCE && BMS_ControlDataValid() && (limitFlags == BMS_OK) && !BMS_Safety_IsFaultOutputActive();
+}
 
 
 BMS_StatusTypeDef BMS_ProgramLoop(void)
 {
-    if (dischargeStopRequested && bms_stopDischarge() != BMS_OK) return BMS_ERR_COMMS;
-    BMS_StatusTypeDef status;
-//    bms_wakeupChain();
-//    if ((status = bms_readCellVoltage(VOLTAGE_C_FIL)))  return status;
-    if (bms_wakeupChain() != BMS_OK) return bms_acquisitionFailed();
-    if ((status = bms_getAuxMeasurement())) return status;
+    uint32_t sampleTick = HAL_GetTick();
+    BMS_StatusTypeDef status = BMS_OK;
+    uint32_t sampleFlags=BMS_OK;
+    BMS_AcquisitionStatus pending=acquisition;
 
-    if (bms_wakeupChain() != BMS_OK) return bms_acquisitionFailed();
-    if ((status = bms_balancingMeasureVoltage()))       return status;
+    ic_ad68=committedAd68; ic_common=committedCommon;
+    acquisition.pecFault=false; acquisition.counterFault=false;
+    if (!bms_wakeupChain() || !bms_transmitCmd(RSTCC)) status=BMS_ERR_COMMS;
+    if (status==BMS_OK && dischargeStopRequested && !bms_stopDischarge()) status=BMS_ERR_COMMS;
 
-    // Only balancing/charging if status is OK
-    status = BMS_UpdateStatusFlags();
-
-    if (enableBalancing && (status == BMS_OK)) // Only if everything is OK, we enable balancing
+    // A slave that reset since the last cycle (a dip of its supply) answers again at once, but at its reset values
+    bool slaveReset = false;
+    if (status==BMS_OK && !bms_findResetSlaves(&slaveReset))
     {
-        if (bms_wakeupChain() != BMS_OK) return bms_acquisitionFailed();
-        status = bms_startBalancing(balancingThreshold);
+        status = BMS_ERR_COMMS;
     }
+
+    // Rewritten every cycle: restores REFON and the GPIO outputs if a slave has reset, and applies LED changes.
+    // The continuous C-ADC is otherwise only started by bms_init.
+    bms_applyGpo();
+    if (status == BMS_OK && !bms_writeRegister(REG_CONFIG_A))
+    {
+        status = BMS_ERR_COMMS;
+    }
+    if (status == BMS_OK && slaveReset && !bms_startAdcvCont())
+    {
+        status = BMS_ERR_COMMS;
+    }
+
+    if (status == BMS_OK)
+    {
+        status = bms_startAuxMeasurement();     // ~18 ms conversion, runs in the background
+    }
+    if (status == BMS_OK)
+    {
+        status = bms_measureCells();            // ~30 ms with the open wire check
+    }
+    if (status == BMS_OK)
+    {
+        status = bms_readAuxMeasurement();      // Normally finished by now
+    }
+
+    if (status == BMS_OK)
+    {
+        pending.cellsValid=pending.auxValid=true;pending.celsiusValid=true;
+        for(int ic=0;ic<TOTAL_IC;ic++)if(ic_ad68.celsius_valid[ic]!=((1U<<CFG_TEMPS_PER_SLAVE)-1U))pending.celsiusValid=false;
+        pending.cellTick=pending.auxTick=sampleTick;
+        uint32_t limitFlags = bms_evaluateLimits();
+
+        // IVT U1 vs the sum of cells, both from this conversion (T 11.9 plausibility). A conversion that
+        // can't be compared (current moving) holds the last result, so it neither starts nor clears a violation.
+        static bool implausibleReported = false;
+        static bool implausible = false;
+        if (measU1Valid)
+        {
+            implausible = CFG_PACK_V_PLAUSIBILITY_V > 0 &&
+                          fabsf(measU1_V - ic_common.v_pack_total) > CFG_PACK_V_PLAUSIBILITY_V;
+        }
+        if (implausible)
+        {
+            limitFlags |= BMS_ERR_VOLTAGE;
+            if (!implausibleReported)
+            {
+                printfDma("PACK VOLTAGE IMPLAUSIBLE: IVT U1 %.1f V, sum of cells %.1f V\n",
+                          (double)measU1_V, (double)ic_common.v_pack_total);
+            }
+        }
+        implausibleReported = implausible;
+
+
+
+        if (bms_isBalancingAllowed(limitFlags))
+        {
+            if (!bms_startDischarge(ic_common.v_pack_min + CFG_BALANCE_THRESHOLD_V)) status=BMS_ERR_COMMS;
+        }
+        else if (isDischargeActive)
+        {
+            if (!bms_stopDischarge()) status=BMS_ERR_COMMS;
+        }
+        if (status==BMS_OK) {
+            committedAd68=ic_ad68; committedCommon=ic_common;
+            pending.generation++;
+            pending.pecFault=pending.counterFault=false;pending.transportFault=BMS_TRANSPORT_OK;pending.stopFailed=acquisition.stopFailed;
+            sampleFlags=limitFlags;
+        }
+    }
+    if (status!=BMS_OK) {
+        BMS_TransportFault primary=bms_getTransportFault();
+        bms_getCounterState(&failedCounterState);
+        bool pec=acquisition.pecFault, counter=acquisition.counterFault;
+        acquisition.cellsValid=acquisition.auxValid=acquisition.celsiusValid=false;
+        bool mayBeDischarging=isDischargeActive;
+        bool stopped=bms_stopDischarge();
+        if (!stopped && mayBeDischarging) BMS_Health_Latch(BMS_ERR_BALANCE_STOP);
+        ic_ad68=committedAd68; ic_common=committedCommon;
+        /* Recovery never restores a previous actuation request. */
+        for(int ic=0;ic<TOTAL_IC;ic++) {
+            memset(&ic_ad68.pwma[ic],0,sizeof(ic_ad68.pwma[ic]));
+            memset(&ic_ad68.pwmb[ic],0,sizeof(ic_ad68.pwmb[ic]));
+            ic_ad68.cfb_Tx[ic].dcc=0; ic_ad68.cfb_Tx[ic].dcto=0;
+            ic_ad68.isDischarging[ic]=0;
+        }
+        committedAd68=ic_ad68;
+        for (int ic=0;ic<TOTAL_IC;ic++) ic_common.isCommsError[ic]=true;
+        acquisition.transportFault=primary; acquisition.pecFault=pec; acquisition.counterFault=counter;
+        pending=acquisition;
+        BMS_RequestSafeOutputs();
+    }
+
+    // SoC: open-circuit estimate needs a complete measurement and no load; energy is tracked regardless
+    IvtReading ivt = BMS_IVT_GetReading();
+    float meanCell = 0.0f;
+    bool meanValid = (status == BMS_OK) && bms_meanCellVoltage(&meanCell);
+    bool noLoad=ivt.currentValid && !BMS_IsCharging() && fabsf(ivt.current_A)<CFG_SOC_NO_LOAD_CURRENT_A;
+    BMS_SoC_Update(meanCell, meanValid, noLoad, &ivt);
+
+    bms_publishCanFrames(&pending);
+    if(status==BMS_OK)BMS_Safety_ReportMeasurement(sampleTick,sampleFlags);
+    loopTimeMs = HAL_GetTick() - sampleTick;
 
     return status;
 }
-
-
 
 
 bool BMS_IsCharging(void)
@@ -1439,30 +1464,18 @@ bool BMS_IsCharging(void)
 
 void BMS_EnableCharging(bool enabled)
 {
-    // A button/API request cannot bypass known software faults or stale data.
-    if (enabled && (BMS_StatusFlags != BMS_OK || BMS_CheckPackSensor() != BMS_OK
-            || BMS_CheckAdbmsData() != BMS_OK || BMS_CheckCurrent() != BMS_OK)) enabled = false;
+    IvtReading ivt=BMS_IVT_GetReading();
+    enabled=enabled && ivt.currentValid && ivt.voltageValid && BMS_GPIO_IsSdcClosed() && BMS_CAN_ENABLE_CHARGER && BMS_Charger_Healthy() && BMS_GetMinCellTempC()>=CFG_CELL_CHARGE_TEMP_MIN_C && BMS_GetMaxCellTempC()<=CFG_CELL_CHARGE_TEMP_MAX_C && BMS_ControlDataValid() && !BMS_Safety_IsFaultOutputActive();
     chargerConfig.disable_charging = !enabled;   // Inverted logic because config is disable = 1
 
     char *state = (chargerConfig.disable_charging)? "Disabled" : "Enabled";
     printfDma("Charger Status: %s\n", state);
 }
 
-void BMS_ToggleBalancing(void)
-{
-    BMS_EnableBalancing(!enableBalancing);
-}
-
-
 void BMS_EnableBalancing(bool enabled)
 {
-    enableBalancing = enabled && BMS_BALANCING_CONFIG_CONFIRMED && BMS_BALANCING_MAX_PWM > 0;
-    if (!enableBalancing) {
-        // Button/timer callbacks may request a stop; blocking SPI stays in the
-        // foreground, where its HAL deadlines can advance.
-        bms_clearDischargeState();
-        dischargeStopRequested = true;
-    }
+    enableBalancing=enabled && BMS_CAN_BALANCE;
+    if (!enableBalancing) dischargeStopRequested=true;
 }
 
 
@@ -1480,11 +1493,12 @@ void BMS_ChargingButtonLogic(void)
     }
 
     bool statusOK = true;
-    if (!HAL_GPIO_ReadPin(SDC_IN_GPIO_Port, SDC_IN_Pin)) statusOK = false;  // SDC is not connected
+    if (!BMS_GPIO_IsSdcClosed()) statusOK = false;                  // SDC is not connected
+    if (BMS_Safety_IsFaultOutputActive()) statusOK = false;
 //    if (chargerStatus.hardware_fault != false)      statusOK = false;
 //    if (chargerStatus.over_temp_fault != false)     statusOK = false;
 //    if (chargerStatus.input_voltage_fault != false) statusOK = false;
-    if (chargerStatus.output_voltage < BMS_MV_TO_V(BMS_CHARGER_MIN_OUTPUT_MV)) statusOK = false;
+    if (chargerStatus.output_voltage < 300.0f)      statusOK = false;
 
     if (statusOK)
     {
@@ -1495,23 +1509,3 @@ void BMS_ChargingButtonLogic(void)
         printfDma("Charger NOT OK to start Charging \n");
     }
 }
-
-
-
-
-void BMS_WriteFaultSignal(bool state)
-{
-    static bool currState = 1;
-    if (currState != state)
-    {
-        char *stateStr = (state)? "ON " : "OFF";
-        printfDma("FAULT SIGNAL UPDATE: %s\n", stateStr);
-
-        HAL_GPIO_WritePin(FAULT_CTRL_GPIO_Port, FAULT_CTRL_Pin, state); // If mosfet is ON, Fault == TRUE
-        currState = state;
-    }
-}
-
-
-
-

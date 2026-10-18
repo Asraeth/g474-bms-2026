@@ -1,36 +1,24 @@
 /*
  * bms_mcuWrapper.h
  *
- *  Created on: Nov 24, 2024
- *      Author: amrlxyz
+ * The MCU side of the isoSPI link: chip select (to the ADBMS6822) and the microsecond delays it needs.
  */
 
 #pragma once
 
-#include "stdint.h"
+#include <stdint.h>
 #include <stdbool.h>
-#include "main.h"
-
-uint32_t bms_enterCritical(void);
-void bms_exitCritical(uint32_t previousMask);
-bool bms_spiContextAllowed(void);
 
 // Chip select
 void bms_csLow(void);
 void bms_csHigh(void);
 
+// Wakes every device in the daisy chain from sleep (and their isoSPI ports from idle)
+bool bms_wakeupChain(void);
 
-// Timer Functions
-void bms_startTimer(void);
-void bms_stopTimer(void);
-uint32_t bms_getTimCount(void);  // Get time elapsed in us
+// Busy wait on TIM2 (1 us per count)
+bool bms_delayUs(uint32_t us);
 
-
-// Wake up all the IC in the daisy chain
-BMS_StatusTypeDef bms_wakeupChain(void);
-
-// Microsecond delay
-BMS_StatusTypeDef bms_delayUs(uint32_t us);
-
-// Microsecond delay while preventing isospi sleep
-BMS_StatusTypeDef bms_delayMsActive(uint32_t ms);
+// Busy wait of ms milliseconds that keeps the isoSPI ports awake: a chip select pulse every millisecond
+bool bms_delayMsActive(uint32_t ms);
+bool bms_spiContextAllowed(void);

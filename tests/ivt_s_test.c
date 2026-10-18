@@ -124,7 +124,8 @@ static void test_counters(void)
     assert(snapshot(20).current.last_received_ms == 20 && snapshot(20).current.last_measurement_ms == 10);
     assert(snapshot(110).current.stale); /* Duplicate never extends the watchdog. */
     frame = result(0x521, 0, 3, 0, 102); IVTS_Receive(&driver, &frame, 120);
-    assert(snapshot(120).current.valid && snapshot(120).current.counter_gap_count == 1);
+    assert(!snapshot(120).current.valid && snapshot(120).current.counter_gap_count == 1);
+    frame=result(0x521,0,4,0,103);IVTS_Receive(&driver,&frame,121);assert(snapshot(121).current.valid);
     puts("PASS counter rollover 15->0, duplicate rejection without freshness extension, gap diagnostics and recovery");
 }
 
@@ -136,7 +137,7 @@ static void test_freshness(void)
     IVTS_Receive(&driver, &i, 100); IVTS_Receive(&driver, &u, 100);
     assert(snapshot(199).current.valid && !snapshot(199).current.stale);
     assert(!snapshot(200).current.valid && snapshot(200).current.stale && snapshot(200).u1.valid);
-    assert(snapshot(399).u1.valid && snapshot(400).u1.stale);
+    assert(snapshot(100+IVTS_U1_TIMEOUT_MS-1).u1.valid && snapshot(100+IVTS_U1_TIMEOUT_MS).u1.stale);
     i = result(0x521, 0, 1, 0, 2); IVTS_Receive(&driver, &i, 450);
     assert(snapshot(450).current.valid && snapshot(450).u1.stale);
     u = result(0x522, 1, 1, 0, 400001); IVTS_Receive(&driver, &u, 600);

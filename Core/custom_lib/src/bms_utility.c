@@ -1,52 +1,20 @@
 /*
- * bms_utility.cpp
+ * bms_utility.c
  *
- *  Created on: Nov 24, 2024
- *      Author: amrlxyz
+ * isoSPI transfers to the ADBMS6830B chain, see bms_utility.h. The PEC tables and both PEC functions are
+ * Analog Devices' reference code (datasheet "Packet Error Code").
  */
 
 #include "bms_utility.h"
 #include "bms_mcuWrapper.h"
 #include "main.h"
-#include "string.h"
-#include "bms_safety_config.h"
-
-static BMS_TransportFault transportFault;
-BMS_TransportFault bms_getTransportFault(void) { return transportFault; }
-static BMS_CommandCounterChain commandCounters; // The existing SPI1 isoSPI chain.
-
-void bms_getCounterState(BMS_CommandCounterChain *state) { *state = commandCounters; }
-
-bool bms_checkRxCounter(uint8_t cc[TOTAL_IC], const bool pecErrors[TOTAL_IC], bool errors[TOTAL_IC])
-{
-    return BMS_CC_Check(&commandCounters, cc, pecErrors, errors);
-}
-
-static bool counter_command_allowed(BMS_CounterCommand actual, BMS_CounterCommand required)
-{
-    if (actual == required) return true;
-    transportFault = BMS_TRANSPORT_COMMAND;
-    return false;
-}
-
-static void counter_command_complete(BMS_CounterCommand kind, BMS_StatusTypeDef status)
-{
-    if (status != BMS_OK) BMS_CC_Invalidate(&commandCounters);
-    else if (kind == BMS_CC_RESET) BMS_CC_Reset(&commandCounters);
-    else if (kind == BMS_CC_INCREMENT || kind == BMS_CC_WRITE) BMS_CC_Advance(&commandCounters);
-}
-
-static bool transport_context(void)
-{
-    transportFault = bms_spiContextAllowed() ? BMS_TRANSPORT_OK : BMS_TRANSPORT_CONTEXT;
-    return transportFault == BMS_TRANSPORT_OK;
-}
+#include <string.h>
 
 
-static SPI_HandleTypeDef *hspi         = &hspi1;       /* MCU SPI Handler */
+static SPI_HandleTypeDef *const hspi = &hspi1;
 
-/* Precomputed CRC15 Table */
-const uint16_t Crc15Table[256] =
+// CRC15 table for the command PEC: x^15 + x^14 + x^10 + x^8 + x^7 + x^4 + x^3 + 1
+static const uint16_t Crc15Table[256] =
 {
     0x0000,0xc599, 0xceab, 0xb32, 0xd8cf, 0x1d56, 0x1664, 0xd3fd, 0xf407, 0x319e, 0x3aac,
     0xff35, 0x2cc8, 0xe951, 0xe263, 0x27fa, 0xad97, 0x680e, 0x633c, 0xa6a5, 0x7558, 0xb0c1,
@@ -73,7 +41,7 @@ const uint16_t Crc15Table[256] =
     0x585a, 0x8ba7, 0x4e3e, 0x450c, 0x8095
 };
 
-/* Pre-computed CRC10 Table */
+// CRC10 table for the data PEC: x^10 + x^7 + x^3 + x^2 + x + 1
 static const uint16_t crc10Table[256] =
 {
     0x000, 0x08f, 0x11e, 0x191, 0x23c, 0x2b3, 0x322, 0x3ad, 0x0f7, 0x078, 0x1e9, 0x166, 0x2cb, 0x244, 0x3d5, 0x35a,
@@ -95,7 +63,7 @@ static const uint16_t crc10Table[256] =
 };
 
 
-uint16_t static bms_calcPec15(uint8_t *data, uint8_t len)
+static uint16_t bms_calcPec15(const uint8_t *data, uint8_t len)
 {
     uint16_t remainder, addr;
     remainder = 16; /* initialize the PEC */
@@ -108,7 +76,8 @@ uint16_t static bms_calcPec15(uint8_t *data, uint8_t len)
 }
 
 
-uint16_t static bms_calcPec10(uint8_t *pDataBuf, int nLength, uint8_t *commandCounter)
+// commandCounter: NULL for data sent to the devices; for data read back, the counter the device sent with it
+static uint16_t bms_calcPec10(const uint8_t *pDataBuf, int nLength, const uint8_t *commandCounter)
 {
     uint16_t nRemainder = 16u; /* PEC_SEED */
     /* x10 + x7 + x3 + x2 + x + 1 <- the CRC10 polynomial 100 1000 1111 */
@@ -145,182 +114,156 @@ uint16_t static bms_calcPec10(uint8_t *pDataBuf, int nLength, uint8_t *commandCo
 }
 
 
-static BMS_StatusTypeDef bms_spiTransmitCmd(uint8_t cmd[CMD_LEN])
+// Command code + PEC15
+static bool bms_spiTransmitCmd(const uint8_t cmd[CMD_LEN])
 {
-    uint8_t txBuff_cmd[CMDPKT_LEN];                  // 2 CMD  + 2 PEC
+    uint16_t pec = bms_calcPec15(cmd, CMD_LEN);
+    uint8_t packet[CMDPKT_LEN] = { cmd[0], cmd[1], (uint8_t)(pec >> 8), (uint8_t)pec };
 
-    // Copy cmd bytes to buffer
-    txBuff_cmd[0] = cmd[0];
-    txBuff_cmd[1] = cmd[1];
-
-    // Add PEC bytes
-    uint16_t cmd_pec = bms_calcPec15(cmd, CMD_LEN);
-    txBuff_cmd[2] = (uint8_t)(cmd_pec >> 8);
-    txBuff_cmd[3] = (uint8_t)(cmd_pec);
-
-    // Transmit the buffer to SPI
-    if (HAL_SPI_Transmit(hspi, txBuff_cmd, CMDPKT_LEN, BMS_ADBMS_SPI_TIMEOUT_MS) != HAL_OK) {
-        transportFault = BMS_TRANSPORT_TX;
-        return BMS_ERR_COMMS;
-    }
-    return BMS_OK;
+    return HAL_SPI_Transmit(hspi, packet, CMDPKT_LEN, CFG_SPI_TIMEOUT_MS) == HAL_OK;
 }
 
 
-static BMS_StatusTypeDef bms_spiTransmitData(uint8_t data[TOTAL_IC][DATA_LEN])
+// One register group + PEC10 per device. Each device passes on what it receives and keeps the last group to
+// arrive, so the group for the last device in the chain goes first.
+static bool bms_spiTransmitData(uint8_t data[TOTAL_IC][DATA_LEN])
 {
-    uint8_t txBuff_data[TOTAL_IC][DATAPKT_LEN];    // 6 Data + 2 DPEC per IC
+    uint8_t packets[TOTAL_IC][DATAPKT_LEN];
 
-    for (int ic = 0; ic < TOTAL_IC; ic++)   /* The first configuration written is received by the last IC in the daisy chain */
+    for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        int iv = (TOTAL_IC - 1) - ic;    // Inverted index to get data from the back
+        memcpy(packets[ic], data[(TOTAL_IC - 1) - ic], DATA_LEN);
 
-        // Copy data to the txbuffer
-        // First data is for the last IC
-        memcpy(txBuff_data[ic], data[iv], DATA_LEN); // dest, src, count
-
-        // Caclulate and add DPEC to buffer
-        uint16_t data_pec = bms_calcPec10(txBuff_data[ic], DATA_LEN, NULL);
-        txBuff_data[ic][DATA_LEN + 0] = (uint8_t)(data_pec >> 8);
-        txBuff_data[ic][DATA_LEN + 1] = (uint8_t)(data_pec);
+        uint16_t pec = bms_calcPec10(packets[ic], DATA_LEN, NULL);
+        packets[ic][DATA_LEN + 0] = (uint8_t)(pec >> 8);
+        packets[ic][DATA_LEN + 1] = (uint8_t)pec;
     }
 
-    // Send the whole buffer to SPI
-    if (HAL_SPI_Transmit(hspi, (uint8_t *)txBuff_data, DATAPKT_LEN * TOTAL_IC,
-            BMS_ADBMS_SPI_TIMEOUT_MS) != HAL_OK) {
-        transportFault = BMS_TRANSPORT_TX;
-        return BMS_ERR_COMMS;
-    }
-    return BMS_OK;
+    return HAL_SPI_Transmit(hspi, (uint8_t *)packets, DATAPKT_LEN * TOTAL_IC, CFG_SPI_TIMEOUT_MS) == HAL_OK;
 }
 
 
-static BMS_StatusTypeDef bms_spiReceiveData(uint8_t rxData[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC])
+// One register group per device, first device first. After its data each device sends its command counter
+// (6 bits) and the PEC10 (10 bits).
+static bool bms_spiReceiveData(uint8_t rxData[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC])
 {
-    uint8_t rawRxData[TOTAL_IC][DATAPKT_LEN];
+    uint8_t packets[TOTAL_IC][DATAPKT_LEN];
 
-    if (HAL_SPI_Receive(hspi, (uint8_t *)rawRxData, DATAPKT_LEN * TOTAL_IC,
-            BMS_ADBMS_SPI_TIMEOUT_MS) != HAL_OK) {
-        transportFault = BMS_TRANSPORT_RX;
-        return BMS_ERR_COMMS;
-    }
-
-    for (int ic = 0; ic < TOTAL_IC; ic++)     /* executes for each ic in the daisy chain and packs the data */
+    if (HAL_SPI_Receive(hspi, (uint8_t *)packets, DATAPKT_LEN * TOTAL_IC, CFG_SPI_TIMEOUT_MS) != HAL_OK)
     {
-        // Store recieved data bytes to rxData
-        memcpy(rxData[ic], rawRxData[ic], DATA_LEN);
-
-        // Get command counter value and store to the array
-        rxCc[ic] = rawRxData[ic][DATA_LEN] >> 2; // Six counter bits; PEC includes them.
-
-        // Get received pec value from ic
-        // Mask the first 3 bits from 1st byte and combine with 2nd byte
-        rxPec[ic] = (uint16_t)(((rawRxData[ic][DATA_LEN] & 0x03) << 8) | rawRxData[ic][DATA_LEN + 1]);
+        return false;
     }
-    return BMS_OK;
+
+    for (int ic = 0; ic < TOTAL_IC; ic++)
+    {
+        memcpy(rxData[ic], packets[ic], DATA_LEN);
+        rxCc[ic]  = packets[ic][DATA_LEN] >> 2;
+        rxPec[ic] = (uint16_t)(((packets[ic][DATA_LEN] & 0x03) << 8) | packets[ic][DATA_LEN + 1]);
+    }
+    return true;
 }
 
 
-bool bms_checkRxPec(uint8_t rxData[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC], bool errorIndex[TOTAL_IC])
+bool bms_checkRxPec(uint8_t rxData[TOTAL_IC][DATA_LEN], const uint16_t rxPec[TOTAL_IC], const uint8_t rxCc[TOTAL_IC],
+                    bool errorIndex[TOTAL_IC])
 {
     bool error = false;
 
     for (int ic = 0; ic < TOTAL_IC; ic++)
     {
-        uint16_t calculated_pec = bms_calcPec10(rxData[ic], DATA_LEN, rxCc + ic);
-
-        errorIndex[ic] = false;                          // True == PEC OK
-        if (calculated_pec != rxPec[ic])
-        {
-            errorIndex[ic] = true;                     // Store the error location
-            error = true;                              // Return False to indicate PEC Error
-        }
+        errorIndex[ic] = bms_calcPec10(rxData[ic], DATA_LEN, &rxCc[ic]) != rxPec[ic];
+        error |= errorIndex[ic];
     }
-
     return error;
 }
 
 
-BMS_StatusTypeDef bms_transmitCmd(uint8_t cmd[CMD_LEN])
+/* Per-device expected sequence, inherited from the qualified migration. */
+static BMS_CommandCounterChain commandCounters;
+static BMS_TransportFault transportFault;
+BMS_TransportFault bms_getTransportFault(void) { return transportFault; }
+void bms_getCounterState(BMS_CommandCounterChain *state) { *state = commandCounters; }
+bool bms_checkRxCounter(const uint8_t cc[TOTAL_IC], const bool pecErrors[TOTAL_IC], bool errors[TOTAL_IC])
 {
-    if (!transport_context()) return BMS_ERR_COMMS;
+    return BMS_CC_Check(&commandCounters, cc, pecErrors, errors);
+}
+uint8_t bms_expectedCc(void) { return commandCounters.device[0].expected; }
+static bool context(void)
+{
+    transportFault = bms_spiContextAllowed() ? BMS_TRANSPORT_OK : BMS_TRANSPORT_CONTEXT;
+    return transportFault == BMS_TRANSPORT_OK;
+}
+static bool commandAllowed(const uint8_t *cmd, BMS_CounterCommand required)
+{
+    if (BMS_CC_Classify(cmd) == required) return true;
+    transportFault = BMS_TRANSPORT_COMMAND;
+    return false;
+}
+static void complete(BMS_CounterCommand kind, bool ok)
+{
+    if (!ok) BMS_CC_Invalidate(&commandCounters);
+    else if (kind == BMS_CC_RESET) BMS_CC_Reset(&commandCounters);
+    else if (kind == BMS_CC_INCREMENT || kind == BMS_CC_WRITE) BMS_CC_Advance(&commandCounters);
+}
+bool bms_transmitCmd(const uint8_t cmd[CMD_LEN])
+{
+    if (!context()) return false;
     BMS_CounterCommand kind = BMS_CC_Classify(cmd);
-    if (kind != BMS_CC_RESET && !counter_command_allowed(kind, BMS_CC_INCREMENT)) return BMS_ERR_COMMS;
+    if (kind != BMS_CC_INCREMENT && kind != BMS_CC_RESET) { transportFault=BMS_TRANSPORT_COMMAND; return false; }
     bms_csLow();
-    BMS_StatusTypeDef status = bms_spiTransmitCmd(cmd);
+    bool ok = bms_spiTransmitCmd(cmd);
     bms_csHigh();
-    counter_command_complete(kind, status);
-    return status;
+    if (!ok) transportFault=BMS_TRANSPORT_TX;
+    complete(kind,ok);
+    return ok;
 }
-
-
-BMS_StatusTypeDef bms_transmitPoll(uint8_t cmd[CMD_LEN])
+bool bms_transmitPoll(const uint8_t cmd[CMD_LEN], uint32_t timeoutMs)
 {
-    if (!transport_context()) return BMS_ERR_COMMS;
-    if (!counter_command_allowed(BMS_CC_Classify(cmd), BMS_CC_INCREMENT)) return BMS_ERR_COMMS;
-    const uint32_t started = HAL_GetTick();
+    if (!context() || !commandAllowed(cmd,BMS_CC_INCREMENT) || timeoutMs==0) return false;
+    uint32_t start=HAL_GetTick();
     bms_csLow();
-    BMS_StatusTypeDef status = bms_spiTransmitCmd(cmd);
-    // The command is accepted before polling; busy bytes do not increment CC.
-    counter_command_complete(BMS_CC_INCREMENT, status);
-    while (status == BMS_OK) {
-        uint32_t elapsed = HAL_GetTick() - started;
-        if (elapsed >= BMS_ADBMS_POLL_TIMEOUT_MS) {
-            transportFault = BMS_TRANSPORT_POLL_TIMEOUT;
-            status = BMS_ERR_COMMS;
-            break;
-        }
-        uint32_t remaining = BMS_ADBMS_POLL_TIMEOUT_MS - elapsed;
-        uint32_t timeout = remaining < BMS_ADBMS_SPI_TIMEOUT_MS ? remaining : BMS_ADBMS_SPI_TIMEOUT_MS;
-        uint8_t poll = 0;
-        if (HAL_SPI_Receive(hspi, &poll, 1, timeout) != HAL_OK) {
-            transportFault = BMS_TRANSPORT_RX;
-            status = BMS_ERR_COMMS;
-            break;
-        }
-        if (poll == 0xFF) break; // Partial/nonzero busy responses are not ready.
+    bool ok=bms_spiTransmitCmd(cmd);
+    if (!ok) transportFault=BMS_TRANSPORT_TX;
+    complete(BMS_CC_INCREMENT,ok);
+    /* Rev.0 p55: status valid after 2*N clocks. Discard ceil(2*N/8)
+       bytes; only subsequent bytes can establish complete-stack readiness. */
+    uint32_t primeBytes=(2U*TOTAL_IC+7U)/8U;
+    while (ok) {
+        uint32_t age=HAL_GetTick()-start;
+        if (age>=timeoutMs) { transportFault=BMS_TRANSPORT_POLL_TIMEOUT; ok=false; break; }
+        uint32_t remaining=timeoutMs-age;
+        uint8_t value=0;
+        uint32_t budget=remaining<CFG_SPI_TIMEOUT_MS ? remaining : CFG_SPI_TIMEOUT_MS;
+        if (HAL_SPI_Receive(hspi,&value,1,budget)!=HAL_OK) { transportFault=BMS_TRANSPORT_RX;ok=false;break; }
+        if (primeBytes) { primeBytes--; continue; }
+        if (value==0xFF) break;
     }
     bms_csHigh();
-    return status;
+    if (!ok) BMS_CC_Invalidate(&commandCounters);
+    return ok;
 }
-
-
-BMS_StatusTypeDef bms_transmitData(uint8_t cmd[CMD_LEN], uint8_t txBuffer[TOTAL_IC][DATA_LEN])
+bool bms_transmitData(const uint8_t cmd[CMD_LEN], uint8_t txBuffer[TOTAL_IC][DATA_LEN])
 {
-    if (!transport_context()) return BMS_ERR_COMMS;
-    if (!counter_command_allowed(BMS_CC_Classify(cmd), BMS_CC_WRITE)) return BMS_ERR_COMMS;
+    if (!context() || !commandAllowed(cmd,BMS_CC_WRITE)) return false;
     bms_csLow();
-    BMS_StatusTypeDef status = bms_spiTransmitCmd(cmd);
-    if (status == BMS_OK) status = bms_spiTransmitData(txBuffer);
+    bool ok=bms_spiTransmitCmd(cmd) && bms_spiTransmitData(txBuffer);
     bms_csHigh();
-    // Write INC is conditional on valid DPEC at CS rising (Table 50 note 1).
-    // HAL success predicts acceptance; the next PEC-verified read proves it.
-    counter_command_complete(BMS_CC_WRITE, status);
-    return status;
+    if (!ok) transportFault=BMS_TRANSPORT_TX;
+    complete(BMS_CC_WRITE,ok);
+    return ok;
 }
-
-
-BMS_StatusTypeDef bms_receiveData(uint8_t cmd[CMD_LEN], uint8_t rxBuffer[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC])
+bool bms_receiveData(const uint8_t cmd[CMD_LEN], uint8_t rxBuffer[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC],uint8_t rxCc[TOTAL_IC])
 {
-    // Never leave a previous successful payload behind after HAL failure.
-    for (unsigned int ic = 0; ic < TOTAL_IC; ic++) {
-        for (int byte = 0; byte < DATA_LEN; byte += 2) {
-            rxBuffer[ic][byte] = 0; rxBuffer[ic][byte + 1] = 0x80;
-        }
-        rxPec[ic] = 0; rxCc[ic] = 0;
+    for(int ic=0;ic<TOTAL_IC;ic++) {
+        for(int b=0;b<DATA_LEN;b+=2) {rxBuffer[ic][b]=0;rxBuffer[ic][b+1]=0x80;}
+        rxPec[ic]=0;rxCc[ic]=0;
     }
-    if (!transport_context()) return BMS_ERR_COMMS;
-    if (!counter_command_allowed(BMS_CC_Classify(cmd), BMS_CC_READ)) return BMS_ERR_COMMS;
+    if (!context() || !commandAllowed(cmd,BMS_CC_READ)) return false;
     bms_csLow();
-    BMS_StatusTypeDef status = bms_spiTransmitCmd(cmd);
-    if (status != BMS_OK) BMS_CC_Invalidate(&commandCounters);
-    if (status == BMS_OK) status = bms_spiReceiveData(rxBuffer, rxPec, rxCc);
+    bool ok=bms_spiTransmitCmd(cmd);
+    if (!ok) transportFault=BMS_TRANSPORT_TX;
+    else if (!(ok=bms_spiReceiveData(rxBuffer,rxPec,rxCc))) transportFault=BMS_TRANSPORT_RX;
     bms_csHigh();
-    return status;
+    if (!ok) BMS_CC_Invalidate(&commandCounters);
+    return ok;
 }
-
-
-
-
-
-

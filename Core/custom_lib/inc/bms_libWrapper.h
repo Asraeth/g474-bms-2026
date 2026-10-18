@@ -1,8 +1,7 @@
 /*
  * bms_libWrapper.h
  *
- *  Created on: Nov 24, 2024
- *      Author: amrlxyz
+ * The measurement cycle on the ADBMS6830B chain and what is built from it (limits, balancing, SoC, CAN frames).
  */
 
 #pragma once
@@ -10,101 +9,45 @@
 #include "bms_datatypes.h"
 #include "main.h"
 #include "bms_can.h"
-#include "bms_utility.h"
 
 #include <stdbool.h>
+#include "bms_utility.h"
 
 
-typedef enum
-{
-    VOLTAGE_C,
-    VOLTAGE_C_AVG,
-    VOLTAGE_C_FIL,
-    VOLTAGE_S,
-    TOTAL_CELL_VOLTAGE_TYPES,
-    VOLTAGE_TEMP = TOTAL_CELL_VOLTAGE_TYPES,
-    TOTAL_VOLTAGE_TYPES,
-} VoltageTypes;
-
-typedef enum {
-    REG_CONFIG_A,
-    REG_CONFIG_B,
-    REG_PWM_A,
-    REG_PWM_B,
-    REG_SID,
-    TOTAL_REG_TYPES,
-} RegisterTypes;
-
-
+// Configures the chain and starts the C-ADC. BMS_ERR_COMMS if a device doesn't answer.
 BMS_StatusTypeDef bms_init(void);
 
-BMS_StatusTypeDef bms_startAdcvCont(bool enableRedundant);
+// Every device to sleep with its registers reset (before bms_init again)
+void bms_softReset(void);
 
-BMS_StatusTypeDef bms_readCellVoltage(VoltageTypes voltageType);
-
-BMS_StatusTypeDef bms_readRegister(RegisterTypes regTypes);
-
-BMS_StatusTypeDef bms_getAuxMeasurement(void);
-
-BMS_StatusTypeDef bms_startDischarge(float threshold);
-
-BMS_StatusTypeDef bms_stopDischarge(void);
-
-BMS_StatusTypeDef bms_softReset(void);
-
-typedef struct {
-    IVTS_Snapshot ivt;
-    float current_a;         // Signed sensor value; vehicle polarity is unassigned.
-    float voltage_u1_v;
-    float cell_voltage_sum_v; // Independent ADBMS6830 cross-check.
-    float voltage_difference_v; // U1 minus cell sum; no invented fault threshold.
-    bool cell_voltage_sum_valid;
-} BMS_PackMeasurements;
-
-void BMS_GetPackMeasurements(BMS_PackMeasurements *measurements);
-BMS_StatusTypeDef BMS_CheckPackSensor(void);
-typedef struct {
-    bool cell_valid, aux_valid;
-    uint32_t cell_last_received_ms, aux_last_received_ms;
-    BMS_TransportFault last_acquisition_transport_fault;
-    bool last_pec_error, last_counter_error, discharge_stop_failed;
-    BMS_CommandCounterChain counters; // Last check; preserves primary failure through stop.
-} BMS_AdbmsDataStatus;
-void BMS_GetAdbmsDataStatus(BMS_AdbmsDataStatus *status);
-BMS_StatusTypeDef BMS_CheckAdbmsData(void);
-
-BMS_StatusTypeDef bms_balancingMeasureVoltage(void);
-
-BMS_StatusTypeDef bms_startBalancing(float deltaThreshold);
-
-// Byte 7 of existing cell/TEMPn frames; n is the logical connector index.
-#define BMS_CAN_TEMP_INPUT_VALID  (1U << 0)
-#define BMS_CAN_TEMP_C_VALID      (1U << 1)
-// Byte 7 of existing board frames. Invalid numeric fields use INT32_MIN
-// (VPV in mV) or INT16_MIN (temperature in centidegrees C).
-#define BMS_CAN_VPV_VALID         (1U << 0)
-#define BMS_CAN_DIE_TEMP_VALID    (1U << 1)
-#define BMS_CAN_CELL_VOLTAGE_VALID (1U << 2) // Byte 7 of board/cell frames.
-
-void BMS_GetCanData(CanTxMsg** buff, uint32_t* len);
-
-
+// One complete measurement cycle. Limit violations are reported to the safety module,
+// the return value is only BMS_OK or BMS_ERR_COMMS.
 BMS_StatusTypeDef BMS_ProgramLoop(void);
-BMS_StatusTypeDef BMS_UpdateStatusFlags(void);
+
+// Builds the CAN frames to send. Called from the timer interrupt.
+void BMS_GetCanData(CanTxMsg** buff, uint32_t* len);
+uint32_t BMS_GetFastCanData(CanTxMsg msgs[CAN_FAST_FRAME_COUNT]);
+void BMS_GetChargerCanMsg(CanTxMsg* msg);
+float BMS_GetMaxCellTempC(void);
+
+uint32_t BMS_GetLoopTimeMs(void);
 
 void BMS_EnableCharging(bool enabled);
 void BMS_ChargingButtonLogic(void);
 bool BMS_IsCharging(void);
 
 void BMS_EnableBalancing(bool enabled);
-void BMS_ToggleBalancing(void);
 
-BMS_StatusTypeDef BMS_CheckTemps(void);
-BMS_StatusTypeDef BMS_CheckVoltage(void);
-BMS_StatusTypeDef BMS_CheckCurrent(void);
-BMS_StatusTypeDef BMS_CheckCommsFault(void);
+// Slave board LEDs (normally off). Applied on the next measurement cycle.
+void BMS_SetSlaveLeds(uint8_t slave, bool red, bool green);
 
-void BMS_SetCommsFault(bool state);
-
-void BMS_WriteFaultSignal(bool state);
-
+typedef struct {
+    bool cellsValid, auxValid, celsiusValid, pecFault, counterFault, stopFailed;
+    uint32_t cellTick, auxTick, generation;
+    BMS_TransportFault transportFault;
+} BMS_AcquisitionStatus;
+void BMS_GetAcquisitionStatus(BMS_AcquisitionStatus *out);
+bool BMS_ControlDataValid(void);
+float BMS_GetMinCellTempC(void);
+float BMS_GetMaxCellVoltageV(void);
+void BMS_RequestSafeOutputs(void);

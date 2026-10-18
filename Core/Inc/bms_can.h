@@ -1,42 +1,22 @@
 /*
  * bms_can.h
  *
- *  Created on: Jun 8, 2025
- *      Author: amrlxyz
+ * The three FDCANs (classic CAN): CAN1 car bus, CAN2 the IVT-S inside the TSAC, CAN3 the charger. Filters,
+ * transmit queues and the receive interrupt, which hands frames to the modules they're for.
  */
 
 #ifndef INC_BMS_CAN_H_
 #define INC_BMS_CAN_H_
 
 #include "main.h"
-#include "ivt_s.h"
+#include <stdbool.h>
 
 
-#define INC_BMS_CAN_H_
+// CAN1 burst: pack + status + summary + energy + cell, temperature and slave frames
+#define CAN_BUFFER_LEN CFG_CAN_BURST_FRAMES
 
-#define BASE_CAN_ID 0xB000
-#define BMS_CELL_CAN_ID_FIRST BASE_CAN_ID
-#define BMS_CELL_CAN_ID_LAST (BMS_CELL_CAN_ID_FIRST + TOTAL_PACK_CELLS - 1U)
-#define BMS_BOARD_CAN_ID_FIRST (BMS_CELL_CAN_ID_LAST + 1U)
-#define BMS_BOARD_CAN_ID_LAST (BMS_BOARD_CAN_ID_FIRST + TOTAL_AD68 - 1U)
-
-// Vehicle telemetry, after the 112 cell and 14 board IDs.
-#define BMS_PACK_CURRENT_CAN_ID  (BASE_CAN_ID + TOTAL_PACK_CELLS + TOTAL_AD68)
-#define BMS_PACK_U1_CAN_ID       (BMS_PACK_CURRENT_CAN_ID + 1U)
-#define BMS_PACK_CROSSCHECK_CAN_ID (BMS_PACK_CURRENT_CAN_ID + 2U)
-#define BMS_PACK_VALID          (1U << 0)
-#define BMS_PACK_STALE          (1U << 1)
-#define BMS_PACK_RECEIVED       (1U << 2)
-#define BMS_PACK_CONFIG_VERIFIED (1U << 3)
-
-#define CAN_BUFFER_LEN (TOTAL_PACK_CELLS + TOTAL_AD68 + 3U + 1U)
-
-typedef struct
-{
-    uint8_t data[8];
-    FDCAN_RxHeaderTypeDef header;
-} CanRxMsg;
-
+// Sent every CFG_CAN_FAST_PERIOD_MS; this many TX buffers are always kept free for them
+#define CAN_FAST_FRAME_COUNT CFG_CAN_FAST_FRAMES
 
 typedef struct
 {
@@ -49,11 +29,16 @@ typedef struct
 // --- Charger-Specific Definitions ---
 // Define the CAN IDs for charger communication.
 // Replace these with the actual IDs specified by your charger's manufacturer.
-#define CHARGER_CONFIG_CAN_ID 0x1806E5F4
-#define CHARGER_STATUS_CAN_ID 0x18FF50E5
+#define CHARGER_CONFIG_CAN_ID 0x00FFFFFF
+#define CHARGER_FAULT_CAN_ID 0x001FFFFF
+#define CHARGER_MEAS_CAN_ID 0x01000000
+#define CHARGER_TEMP_CAN_ID 0x02000000
+#define CHARGER_STATUS_CAN_ID 0x01100000
 
 // Structure to hold the parsed status data from the charger.
 typedef struct {
+    uint16_t fault_bits;
+    uint8_t state;
     float output_voltage; // Volts
     float output_current; // Amps
     uint8_t hardware_fault      : 1;
@@ -74,23 +59,28 @@ typedef struct {
 extern ChargerStatus chargerStatus;
 
 
+// Filters, start, receive interrupts. Start-up, before the timers run.
 void BMS_CAN_Config(void);
-void BMS_CAN_GetIVTSnapshot(IVTS_Snapshot *snapshot);
 
+// CAN1 measurement burst (timer interrupt, every CFG_CAN_TX_PERIOD_MS): copied, then sent one TX buffer at a
+// time from the TX-FIFO-empty interrupt. A burst still going out when the next one comes is dropped and logged.
 void BMS_CAN_SendBuffer(CanTxMsg* msgArr, uint32_t len);
 
-void BMS_CAN_Test(void);
+// CAN1 frames that mustn't wait for the burst (fast frames, inverter limits, settings responses): straight into
+// the TX FIFO, where CAN_FAST_FRAME_COUNT buffers are kept free for them. Timer interrupt.
+void BMS_CAN_SendFast(const CanTxMsg* msgs, uint32_t count);
 
-void BMS_CAN_SendMsg(CanTxMsg msg);
+// CAN2: a command to the IVT; true once everything sent to it has been acknowledged; drop what hasn't been
+void BMS_CAN_SendIvtCommand(uint32_t id, const uint8_t data[8]);
+bool BMS_CAN_IsIvtTxIdle(void);
+void BMS_CAN_AbortIvtTx(void);
+
+// CAN3: the charger command
+void BMS_CAN_SendCharger(const CanTxMsg* msg);
+
+// Restarts any FDCAN that has gone bus-off. Safety tick.
+void BMS_CAN_RecoverBusOff(void);
 
 void BMS_CAN_GetChargerMsg(const ChargerConfiguration* config, uint8_t* data);
-
-_Static_assert(BMS_CELL_CAN_ID_LAST < BMS_BOARD_CAN_ID_FIRST, "Cell/board CAN ID overlap");
-_Static_assert(BMS_BOARD_CAN_ID_LAST < BMS_PACK_CURRENT_CAN_ID, "Board/pack CAN ID overlap");
-_Static_assert(BMS_PACK_CURRENT_CAN_ID < BMS_PACK_U1_CAN_ID && BMS_PACK_U1_CAN_ID < BMS_PACK_CROSSCHECK_CAN_ID,
-        "Pack CAN ID overlap");
-_Static_assert(BMS_PACK_CROSSCHECK_CAN_ID < CHARGER_CONFIG_CAN_ID && CHARGER_CONFIG_CAN_ID != CHARGER_STATUS_CAN_ID
-        && BMS_PACK_CROSSCHECK_CAN_ID < CHARGER_STATUS_CAN_ID, "Charger CAN ID overlap");
-_Static_assert(CAN_BUFFER_LEN == TOTAL_PACK_CELLS + TOTAL_AD68 + 4U, "Telemetry capacity mismatch");
 
 #endif /* INC_BMS_CAN_H_ */

@@ -1,16 +1,10 @@
-#ifndef BMS_TOPOLOGY_H
-#define BMS_TOPOLOGY_H
-
-#define TOTAL_CELL 8U
-#define TOTAL_TEMP 8U
-#define TOTAL_AD68 14U
-#define TOTAL_IC TOTAL_AD68
-#define TOTAL_PACK_CELLS (TOTAL_AD68 * TOTAL_CELL)
-#define AD68_CELL_GROUP_COUNT ((TOTAL_CELL + 2U) / 3U)
-#define AD68_HARDWARE_CELL_CHANNELS 16U /* Register capacity, not populated cells. */
-#define BMS_POPULATED_CELL_MASK ((1U << TOTAL_CELL) - 1U)
-
-#if TOTAL_CELL != 8 || TOTAL_AD68 != 14 || TOTAL_PACK_CELLS != 112
-#error "This working fork requires the confirmed 14 x 8 topology"
-#endif
-#endif
+#pragma once
+#include "profiles/bms_board_profile.h"
+#include "config/bms_topology_config.h"
+#define TOTAL_CELL CFG_CELLS_PER_SLAVE
+#define TOTAL_TEMP CFG_TEMPS_PER_SLAVE
+#define TOTAL_AD68 CFG_NUM_SLAVES
+#define TOTAL_PACK_CELLS CFG_TOTAL_CELLS
+#define AD68_CELL_GROUP_COUNT ((TOTAL_CELL+2U)/3U)
+#define AD68_HARDWARE_CELL_CHANNELS 16U
+#define BMS_POPULATED_CELL_MASK ((1U<<TOTAL_CELL)-1U)

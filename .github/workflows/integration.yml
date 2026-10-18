@@ -1,0 +1,71 @@
+name: Final BMS digital verification
+on:
+  push:
+    branches: [integration/bms-final]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  digital:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [normal, ubsan, pessimistic, wrap]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install cantools openpyxl
+      - name: Run all scenarios and limiter regression
+        shell: bash
+        run: |
+          flags=""
+          case "${{ matrix.mode }}" in
+            ubsan) flags="--sanitize" ;;
+            pessimistic) flags="--pessimistic" ;;
+            wrap) flags="--wrap" ;;
+          esac
+          python tools/run_digital.py $flags
+          python tools/run_digital.py $flags --variant test/variants/power_window.h boot fast_frames power_window_sustained power_window_bursts power_window_random load_swings limiter_boundaries
+          python tools/run_migrated_contracts.py $([ "${{ matrix.mode }}" = ubsan ] && echo --sanitize || true)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: digital-${{ matrix.mode }}
+          path: test/build/
+  bench-and-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - run: |
+          python tools/run_digital.py --profile 3 bench_contract
+          python tools/build_arm.py debug --profile 3
+          python tools/build_arm.py release --profile 3
+          python tools/build_arm.py debug --profile 1
+          python tools/build_arm.py release --profile 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arm-and-bench
+          path: |
+            build/
+            test/build/profile3-normal/
+  gui-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Asraeth/bms-gui-2026
+          ref: integration/bms-final
+          path: gui-fork
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r gui-fork/requirements.txt openpyxl
+      - run: python tools/generate.py --check
+      - run: python tools/sync_gui_protocol.py gui-fork --check
+      - run: QT_QPA_PLATFORM=offscreen python -m unittest discover -s gui-fork/tests -v

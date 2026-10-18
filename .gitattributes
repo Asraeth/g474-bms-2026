@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings or bash fails on Windows checkouts
+*.sh  text eol=lf
+*.py  text eol=lf
+*.dbc text eol=lf
+# Generated files and their template (tools/generate.py writes LF), and the git hooks
+*.csv text eol=lf
+*.md  text eol=lf
+*.in  text eol=lf
+tools/githooks/* text eol=lf

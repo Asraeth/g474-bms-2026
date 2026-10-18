@@ -42,10 +42,12 @@ _Min_Heap_Size = 0x200; /* required amount of heap */
 _Min_Stack_Size = 0x400; /* required amount of stack */
 
 /* Memories definition */
+/* The last 4 KB of flash hold the runtime settings (bms_config.h CFG_SETTINGS_FLASH_ADDR, bms_settings.c):
+   one 2 KB page in dual-bank mode, but a 4 KB page in single-bank mode, so all 4 KB stay out of the program. */
 MEMORY
 {
   RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
-  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 512K
+  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 508K
 }
 
 /* Sections */

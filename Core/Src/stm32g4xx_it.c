@@ -22,6 +22,7 @@
 #include "stm32g4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "bms_safety.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,6 +57,8 @@
 
 /* External variables --------------------------------------------------------*/
 extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 extern DMA_HandleTypeDef hdma_lpuart1_tx;
 extern UART_HandleTypeDef hlpuart1;
 extern TIM_HandleTypeDef htim15;
@@ -73,7 +76,7 @@ extern TIM_HandleTypeDef htim16;
 void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
+  BMS_Safety_ForceFault();      // Safe outputs, then the watchdog resets the MCU
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
    while (1)
@@ -88,7 +91,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  BMS_Safety_ForceFault();      // Safe outputs, then the watchdog resets the MCU
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -103,7 +106,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-
+  BMS_Safety_ForceFault();      // Safe outputs, then the watchdog resets the MCU
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
@@ -118,7 +121,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-
+  BMS_Safety_ForceFault();      // Safe outputs, then the watchdog resets the MCU
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
@@ -133,7 +136,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-
+  BMS_Safety_ForceFault();      // Safe outputs, then the watchdog resets the MCU
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {
@@ -245,6 +248,34 @@ void FDCAN1_IT0_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles FDCAN2 interrupt 0.
+  */
+void FDCAN2_IT0_IRQHandler(void)
+{
+  /* USER CODE BEGIN FDCAN2_IT0_IRQn 0 */
+
+  /* USER CODE END FDCAN2_IT0_IRQn 0 */
+  HAL_FDCAN_IRQHandler(&hfdcan2);
+  /* USER CODE BEGIN FDCAN2_IT0_IRQn 1 */
+
+  /* USER CODE END FDCAN2_IT0_IRQn 1 */
+}
+
+/**
+  * @brief This function handles FDCAN3 interrupt 0.
+  */
+void FDCAN3_IT0_IRQHandler(void)
+{
+  /* USER CODE BEGIN FDCAN3_IT0_IRQn 0 */
+
+  /* USER CODE END FDCAN3_IT0_IRQn 0 */
+  HAL_FDCAN_IRQHandler(&hfdcan3);
+  /* USER CODE BEGIN FDCAN3_IT0_IRQn 1 */
+
+  /* USER CODE END FDCAN3_IT0_IRQn 1 */
+}
+
+/**
   * @brief This function handles TIM1 break interrupt and TIM15 global interrupt.
   */
 void TIM1_BRK_TIM15_IRQHandler(void)
@@ -301,9 +332,5 @@ void LPUART1_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-void FDCAN2_IT0_IRQHandler(void)
-{
-    HAL_FDCAN_IRQHandler(&hfdcan2);
-}
 
 /* USER CODE END 1 */

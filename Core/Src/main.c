@@ -29,9 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 #include "stdio.h"
-#include <math.h>
 
-#include "bms_cmdlist.h"
 #include "bms_datatypes.h"
 #include "bms_utility.h"
 #include "bms_mcuWrapper.h"
@@ -39,6 +37,14 @@
 
 #include "uartDMA.h"
 #include "bms_can.h"
+#include "bms_gpio.h"
+#include "bms_ivt.h"
+#include "bms_safety.h"
+#include "bms_precharge.h"
+#include "bms_inverter.h"
+#include "bms_settings.h"
+#include "bms_charger.h"
+#include <math.h>
 
 /* USER CODE END Includes */
 
@@ -51,11 +57,7 @@ typedef struct {
     volatile uint32_t counter_commsErrorCumulative;
 } ProgramStats;
 
-typedef struct {
-    uint32_t freq;
-    uint32_t period;
-    float duty;
-} ImdStatus;
+typedef BmsImdStatus ImdStatus;
 
 /* USER CODE END PTD */
 
@@ -75,20 +77,9 @@ typedef struct {
 
 ProgramStats    programStats = {0};
 ImdStatus       imdStatus = {0};
-
-// ISR publishes only raw counts. Foreground processing consumes the latest
-// coherent capture; no protection decision currently consumes imdStatus.
-static volatile struct {
-    uint32_t period;
-    uint32_t high;
-    bool pending;
-} imdCapture;
+static volatile struct {uint32_t period,high;bool pending;} imdCapture;
 
 volatile bool initRequired = true;
-
-const uint32_t MAIN_LOOP_DELAY = BMS_ACQUISITION_DELAY_MS;
-
-static const bool DEBUG_SERIAL_LOOP_TIME = true;
 
 /* USER CODE END PV */
 
@@ -97,9 +88,8 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
 void BMS_WriteFanDuty(float duty);
-void BMS_WriteFaultSignal(bool state);
-void BMS_FaultHandler(BMS_StatusTypeDef status);
-static void BMS_ProcessImdCapture(void);
+void BMS_CommsRecovery(void);
+static void BMS_PollChargerButton(void);
 
 /* USER CODE END PFP */
 
@@ -147,6 +137,7 @@ int main(void)
   MX_FDCAN2_Init();
   MX_TIM15_Init();
   MX_TIM3_Init();
+  MX_FDCAN3_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -154,73 +145,11 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
+    BMS_Startup();
 
-    // Set CS2 Pin to HIGH to disable second SPI on 6822 + MSTR should be high by default
-    HAL_GPIO_WritePin(BMS_CS2_GPIO_Port, BMS_CS2_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BMS_MSTR_GPIO_Port, BMS_MSTR_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(BMS_MSTR2_GPIO_Port, BMS_MSTR2_Pin, GPIO_PIN_SET);
-
-    // Fault By Default
-    BMS_WriteFaultSignal(true);
-
-    // Configure FDCAN
-    BMS_CAN_Config();
-
-    // Start Timer16
-    HAL_TIM_Base_Start_IT(&htim16);
-    HAL_TIM_IC_Start_IT(&htim15, TIM_CHANNEL_1); // Signal Input Channel (Main)
-    HAL_TIM_IC_Start(&htim15, TIM_CHANNEL_2);    // Secondary Channel
-
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);       // Fan PWM Output
-    BMS_WriteFanDuty(0.7);
-
-    uint32_t timeDiff = 0;
-    uint32_t timeStart;
-
-    printfDma("\n\n +++++             PROGRAM START             +++++ \n\n");
-    if (bms_softReset() != BMS_OK) BMS_SetCommsFault(true);
-    HAL_Delay(BMS_SENSOR_STARTUP_DELAY_MS);
-    if (bms_softReset() != BMS_OK) BMS_SetCommsFault(true);
-
-
-    BMS_StatusTypeDef bmsStatus;
     while (1)
     {
-        BMS_ProcessImdCapture();
-        timeStart = HAL_GetTick();
-
-        // Init BMS
-        if (initRequired == true)
-        {
-            bmsStatus = bms_init();
-            if (bmsStatus == BMS_OK)
-            {
-                initRequired = false;
-            }
-            else
-            {
-                BMS_FaultHandler(bmsStatus);
-                continue;
-            }
-        }
-
-        // BMS Program Loop
-        bmsStatus = BMS_ProgramLoop();
-        if (bmsStatus != BMS_OK)
-        {
-            BMS_FaultHandler(bmsStatus);
-        }
-
-        printfDma("-\n");
-
-        // Calculate single loop runtime
-        timeDiff = HAL_GetTick() - timeStart;
-        if (DEBUG_SERIAL_LOOP_TIME)
-        {
-            printfDma("\nRuntime: %ld ms, LoopTime: %ld ms \n\n", HAL_GetTick(), timeDiff);
-        }
-
-        HAL_Delay(MAIN_LOOP_DELAY);
+        BMS_MainLoopIteration();
 
     /* USER CODE END WHILE */
 
@@ -276,105 +205,283 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+// Everything after the CubeMX peripheral init, up to the main loop
+void BMS_Startup(void)
+{
+    // Board I/O from bms_config.h. Fault output asserted and TSAC ready relay off until proven safe.
+    BMS_GPIO_Init();
+
+    // Runtime settings saved from the GUI (inverter limits, charger setpoints), before anything uses them
+    BMS_Settings_Init();
+
+    // Configure FDCAN (CAN1 car bus, CAN2 inside the TSAC, CAN3 charger)
+    BMS_CAN_Config();
+
+    // Start Timer16 (fast CAN frames, safety tick and CAN burst)
+    if(HAL_TIM_Base_Start_IT(&htim16)!=HAL_OK ||
+       HAL_TIM_IC_Start_IT(&htim15,TIM_CHANNEL_1)!=HAL_OK ||
+       HAL_TIM_IC_Start(&htim15,TIM_CHANNEL_2)!=HAL_OK ||
+       HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_2)!=HAL_OK)Error_Handler();
+    BMS_WriteFanDuty(0.7);
+
+    printfDma("\n\n +++++             PROGRAM START             +++++ \n\n");
+    printfDma("Board profile: %s, slaves=%d, energetic capabilities B/C/H/I=%d/%d/%d/%d\n",BMS_PROFILE_NAME,TOTAL_IC,BMS_CAN_BALANCE,BMS_CAN_ACTUATE_CONTACTORS,BMS_CAN_ENABLE_CHARGER,BMS_CAN_DRIVE_INVERTER);
+    if (CFG_LOCAL_OVERRIDES)
+    {
+        printfDma(" *** BENCH BUILD: bms_config_local.h overrides bms_config.h. NOT FOR THE CAR. *** \n\n");
+    }
+    printfDma("Inputs: SDC %s, charger button %s\n", BMS_GPIO_IsSdcClosed() ? "closed" : "open",
+              BMS_GPIO_IsChargerButtonPressed() ? "pressed" : "released");
+    bms_softReset();
+    HAL_Delay(500);         // Initialisation delay, also covers the IVT-S start-up time
+
+    if(!bms_wakeupChain())BMS_RequestSafeOutputs();
+    bms_softReset();
+
+    // From here the main loop must run at least every CFG_WATCHDOG_TIMEOUT_MS
+    BMS_Watchdog_Start();
+}
+
+
+// One pass of the main loop: measure, react, then wait out the rest of CFG_MEAS_PERIOD_MS
+// Logs each change of the fault flags or the fault output with the tick it happened on
+static void logSafetyEvents(void)
+{
+    static const char* const names[] = { "COMMS", "VOLTAGE", "TEMP", "CURRENT", "OPEN_WIRE", "IVT", "STARTUP" };
+    static bool     lastOutput = true;
+    static uint32_t lastLost   = 0;
+    SafetyEvent e;
+    uint32_t lost;
+
+    while (BMS_Safety_PopEvent(&e, &lost))
+    {
+        char changes[96];
+        int  n = 0;
+        for (uint32_t b = 0; b < sizeof(names) / sizeof(names[0]) && n < (int)sizeof(changes) - 16; b++)
+        {
+            uint32_t bit = 1UL << b;
+            if ((e.flags ^ e.prevFlags) & bit)
+            {
+                n += snprintf(&changes[n], sizeof(changes) - n, " %c%s", (e.flags & bit) ? '+' : '-', names[b]);
+            }
+        }
+        changes[n] = '\0';
+        const char* output = e.faultOutput == lastOutput ? "" : e.faultOutput ? "output ON" : "output off";
+        if (e.flags != e.prevFlags)
+        {
+            printfDma("Fault %lu ms: 0x%02lX -> 0x%02lX%s%s%s\n", (unsigned long)e.tick, (unsigned long)e.prevFlags,
+                      (unsigned long)e.flags, changes, output[0] ? ", " : "", output);
+        }
+        else
+        {
+            printfDma("Fault %lu ms: %s\n", (unsigned long)e.tick, output);
+        }
+        lastOutput = e.faultOutput;
+        if (lost != lastLost)
+        {
+            printfDma("Fault log: %lu changes not logged\n", (unsigned long)(lost - lastLost));
+            lastLost = lost;
+        }
+    }
+}
+
+
+void BMS_MainLoopIteration(void)
+{
+    BMS_StatusTypeDef bmsStatus;
+    BMS_ProcessImdCapture();
+    uint32_t timeStart = HAL_GetTick();
+
+#ifdef BMS_TEST_WATCHDOG
+    // Bring-up test build only: hang after 10 s. The watchdog must reset the MCU with the fault output held.
+    if (timeStart > 10000)
+    {
+        printfDma("BMS_TEST_WATCHDOG: hanging the main loop\n");
+        while (1)
+        {
+        }
+    }
+#endif
+
+    BMS_Watchdog_Kick();
+    bool commsFailed = false;
+
+    // Init BMS
+    if (initRequired == true)
+    {
+        bmsStatus = bms_init();
+        if (bmsStatus == BMS_OK)
+        {
+            initRequired = false;
+        }
+        else
+        {
+            BMS_CommsRecovery();
+            commsFailed = true;
+        }
+    }
+
+    // BMS Program Loop. Limit violations go to the safety module, only comms errors come back here.
+    if (initRequired == false)
+    {
+        bmsStatus = BMS_ProgramLoop();
+        if (bmsStatus == BMS_OK)
+        {
+            programStats.counter_commsError = 0;
+        }
+        else
+        {
+            BMS_CommsRecovery();
+            commsFailed = true;
+        }
+    }
+
+    // Never charge while the AMS is faulted
+    if (BMS_IsCharging() && BMS_Safety_IsFaultOutputActive())
+    {
+        printfDma("Fault Detected, Disabling Charging \n");
+        BMS_EnableCharging(false);
+    }
+
+    BMS_IVT_Service();
+    BMS_Settings_Service();
+    logSafetyEvents();
+
+    // Calculate single loop runtime
+    uint32_t timeDiff = HAL_GetTick() - timeStart;
+    if (CFG_DEBUG_PRINT_LOOP)
+    {
+        printfDma("Runtime: %lu ms, LoopTime: %lu ms, Faults: 0x%02lX \n", (unsigned long)HAL_GetTick(),
+                  (unsigned long)timeDiff, (unsigned long)BMS_Safety_GetActiveFlags());
+    }
+    if (timeDiff > CFG_MEAS_PERIOD_MS)
+    {
+        printfDma("WARNING! Loop overrun: %lu ms \n", (unsigned long)timeDiff);
+    }
+    if (BMS_GetLoopTimeMs() > CFG_MEAS_CYCLE_MAX_MS)
+    {
+        printfDma("WARNING! Measurement cycle %lu ms, longer than CFG_MEAS_CYCLE_MAX_MS \n",
+                  (unsigned long)BMS_GetLoopTimeMs());
+    }
+
+    // Wait for the rest of the measurement period, answering settings requests and looking after the IVT meanwhile.
+    // A failed cycle is retried after CFG_COMMS_RETRY_DELAY_MS while the measurements aren't stale yet, so a brief
+    // isoSPI glitch or slave power dip is ridden through; after that, at the normal period.
+    bool retrySoon = commsFailed && BMS_Safety_GetMeasurementAgeMs() < CFG_MEAS_STALE_TIMEOUT_MS;
+    uint32_t waitFrom = retrySoon ? HAL_GetTick() : timeStart;
+    uint32_t waitFor  = retrySoon ? CFG_COMMS_RETRY_DELAY_MS : CFG_MEAS_PERIOD_MS;
+    while (HAL_GetTick() - waitFrom < waitFor)
+    {
+        BMS_Watchdog_Kick();
+        BMS_Settings_Service();
+        BMS_IVT_Service();
+        logSafetyEvents();
+    }
+}
+
+
 /// Timer interrupt callback
 // Callback: timer has rolled over
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    uint32_t currentTime = HAL_GetTick(); // Get current time
-
-    // Check which version of the timer triggered this callback and toggle LED
+    // runtime (seconds) timer
     static uint32_t secondsDiv = 0;
 
     // CAN Transmit Periodic Timing Variable
     static uint32_t canTiming = 0;
 
-    // Voltage fault timer variables
-    const uint32_t VOLTAGE_FAULT_PERIOD = BMS_VOLTAGE_FAULT_DELAY_MS;
-    static uint32_t lastVoltageFaultTime = 0;
-    static bool voltageFaultDetected = false;
+    // Timer tick dividers. The inverter limits go out half a fast period after the fast frames.
+    static uint32_t fastTiming = 0;
+    static uint32_t inverterTiming = CFG_CAN_FAST_PERIOD_MS / 2 / CFG_TIMER_TICK_MS;
+    static uint32_t safetyTiming = 0;
 
-    // Temperature fault Time
-    const uint32_t TEMP_FAULT_PERIOD = BMS_TEMPERATURE_FAULT_DELAY_MS;
-    static uint32_t lastTempFaultTime = 0;
-    static bool tempFaultDetected = false;
-
-    if (htim == &htim16) // This is triggered 10x every second
+    if (htim == &htim16) // Every CFG_TIMER_TICK_MS
     {
-        // runtime (seconds) timer
-        if (++secondsDiv >= 10)
+        BMS_IVT_Tick();                             // U1 averaged over the cell conversion
+        BMS_Inverter_Tick();                        // 500 ms moving average of the discharge power
+
+        // Frames queued this tick: only 2 TX buffers are kept free, so each tick sends at most one group
+        bool sentThisTick = false;
+        static bool responseSentThisPeriod = false;
+
+        if (++fastTiming >= CFG_CAN_FAST_PERIOD_MS / CFG_TIMER_TICK_MS)
+        {
+            CanTxMsg fastMsgs[CAN_FAST_FRAME_COUNT];
+            BMS_CAN_SendFast(fastMsgs, BMS_GetFastCanData(fastMsgs));
+            fastTiming = 0;
+            sentThisTick = true;
+            responseSentThisPeriod = false;
+        }
+
+        // Inverter limits, then the BMS_Limits frame on the next tick
+        static bool limitsFramePending = false;
+        if (++inverterTiming >= CFG_INVERTER_LIMIT_PERIOD_MS / CFG_TIMER_TICK_MS)
+        {
+            BMS_Inverter_Update();
+            if (CFG_INVERTER_LIMITS_ENABLED)
+            {
+                CanTxMsg limitMsgs[INVERTER_LIMIT_FRAME_COUNT];
+                BMS_CAN_SendFast(limitMsgs, BMS_Inverter_GetCanFrames(limitMsgs));
+                sentThisTick = true;
+            }
+            limitsFramePending = true;
+            inverterTiming = 0;
+        }
+        else if (limitsFramePending)
+        {
+            CanTxMsg limitsFrame;
+            BMS_Inverter_GetLimitsFrame(&limitsFrame);
+            BMS_CAN_SendFast(&limitsFrame, 1);
+            limitsFramePending = false;
+            sentThisTick = true;
+        }
+
+        // Settings responses: at most one per fast period, on a tick with nothing else
+        CanTxMsg response;
+        if (!sentThisTick && !responseSentThisPeriod && BMS_Settings_GetResponse(&response))
+        {
+            BMS_CAN_SendFast(&response, 1);
+            responseSentThisPeriod = true;
+        }
+
+        if (++safetyTiming < CFG_SAFETY_TICK_MS / CFG_TIMER_TICK_MS)
+        {
+            return;
+        }
+        safetyTiming = 0;
+
+        // Every CFG_SAFETY_TICK_MS from here
+        // Fault evaluation, AMS fault output and TSAC ready relay, then precharge (same tick)
+        BMS_Safety_Tick();
+        BMS_Precharge_Tick();
+        BMS_Charger_Tick();
+        BMS_CAN_RecoverBusOff();
+
+        if (++secondsDiv >= 1000 / CFG_SAFETY_TICK_MS)
         {
             programStats.runtime_sec += 1;
             secondsDiv = 0;
         }
 
         // CAN Timing Divider
-        if (++canTiming >= 5)
+        if (++canTiming >= CFG_CAN_TX_PERIOD_MS / CFG_SAFETY_TICK_MS)
         {
             CanTxMsg *msgArr = NULL;
             uint32_t len = 0;
             BMS_GetCanData(&msgArr, &len);
             BMS_CAN_SendBuffer(msgArr, len);
+
+            CanTxMsg charger;
+            BMS_GetChargerCanMsg(&charger);
+            BMS_CAN_SendCharger(&charger);          // CAN3
+            BMS_Charger_GetInhibit(&charger); BMS_CAN_SendCharger(&charger);
             canTiming = 0;
         }
 
-        // voltage fault handling
-        if (BMS_CheckVoltage() == BMS_OK)       // If OK:
-        {
-            voltageFaultDetected = false;
-        }
-        else                                    // If NOT OK
-        {
-            if (!voltageFaultDetected)          // First time NOT OK
-            {
-                voltageFaultDetected = true;
-                lastVoltageFaultTime = currentTime;
-            }
-            else if (currentTime - lastVoltageFaultTime > VOLTAGE_FAULT_PERIOD)     // NOT OK for given period
-            {
-                BMS_WriteFaultSignal(true);
-            }
-        }
+        BMS_PollChargerButton();
 
-        // temperature fault handling
-        if (BMS_CheckTemps() == BMS_OK)     // If OK:
-        {
-            tempFaultDetected = false;
-        }
-        else                                // If NOT OK
-        {
-            if (!tempFaultDetected)         // First time NOT OK
-            {
-                tempFaultDetected = true;
-                lastTempFaultTime = currentTime;
-            }
-            else if (currentTime - lastTempFaultTime > TEMP_FAULT_PERIOD)     // NOT OK for given period
-            {
-                BMS_WriteFaultSignal(true);
-            }
-        };
-        //    const float MIN_TEMP = 0;
-
-        // Check IVT independently of the slower acquisition loop. Stale/missing
-        // pack data must not be cleared by a healthy isoSPI communications flag.
-        bool packSensorOK = BMS_CheckPackSensor() == BMS_OK;
-        bool adbmsDataOK = BMS_CheckAdbmsData() == BMS_OK;
-        bool currentOK = BMS_CheckCurrent() == BMS_OK;
-        if (!packSensorOK || !adbmsDataOK || !currentOK)
-        {
-            BMS_EnableBalancing(false);
-            BMS_WriteFaultSignal(true);
-            if (BMS_IsCharging()) BMS_EnableCharging(false);
-        }
-
-        // Disable fault signal only if everything is OK
-        if (!tempFaultDetected && !voltageFaultDetected && (BMS_CheckCommsFault() == BMS_OK)
-                && packSensorOK && adbmsDataOK && currentOK)
-        {
-            BMS_WriteFaultSignal(false);
-        }
-
-        // If charging and SDC is disconnected (LOW):
-        if (BMS_IsCharging() && !HAL_GPIO_ReadPin(SDC_IN_GPIO_Port, SDC_IN_Pin))
+        // If charging and SDC is disconnected:
+        if (BMS_IsCharging() && !BMS_GPIO_IsSdcClosed())
         {
             printfDma("SDC Disconnected, Disabling Charging \n");
             BMS_EnableCharging(false);
@@ -383,36 +490,25 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 }
 
 
-static void BMS_ProcessImdCapture(void)
+void BMS_ProcessImdCapture(void)
 {
-    // Only copy/acknowledge the ISR snapshot while interrupts are masked.
-    // An interrupt after this copy remains pending for the next foreground pass.
-    uint32_t mask = bms_enterCritical();
-    const bool pending = imdCapture.pending;
-    const uint32_t period = imdCapture.period;
-    const uint32_t high = imdCapture.high;
-    imdCapture.pending = false;
-    bms_exitCritical(mask);
-    if (!pending) return;
-
-    imdStatus.period = period;
-    if (period != 0) {
-        const uint32_t clockFreq = UINT32_C(128000000); // Existing timer clock assumption.
-        // uint32 counts convert exactly to double; high*100 stays below 2^39.
-        // Preserve the original duty/frequency arithmetic outside the ISR.
-        imdStatus.duty = (float)(((double)high * 100.0) / (double)period);
-        imdStatus.freq = clockFreq / period;
-    }
+    uint32_t mask=__get_PRIMASK();__disable_irq();
+    bool pending=imdCapture.pending;uint32_t period=imdCapture.period,high=imdCapture.high;
+    imdCapture.pending=false;__set_PRIMASK(mask);
+    if(!pending)return;
+    imdStatus.period=period;
+    if(period) {imdStatus.duty=(float)(((double)high*100.0)/(double)period);imdStatus.freq=CFG_IMD_TIMER_CLOCK_HZ/period;}
 }
-
+BmsImdStatus BMS_GetImdStatus(void)
+{
+    uint32_t mask=__get_PRIMASK();__disable_irq();BmsImdStatus status=imdStatus;__set_PRIMASK(mask);return status;
+}
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim == &htim15)   // PWM input
-    {
-        const uint32_t period = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-        imdCapture.period = period;
-        imdCapture.high = period != 0 ? HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2) : 0;
-        imdCapture.pending = true;
+    if(htim==&htim15) {
+        imdCapture.period=HAL_TIM_ReadCapturedValue(htim,TIM_CHANNEL_1);
+        imdCapture.high=imdCapture.period ? HAL_TIM_ReadCapturedValue(htim,TIM_CHANNEL_2):0;
+        imdCapture.pending=true;
     }
 }
 
@@ -423,7 +519,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
     const uint32_t DEBOUNCE_DELAY = 500;
     static uint32_t lastDebounceTime_B1 = 0;
-    static uint32_t lastDebounceTime_CHRGR_BTTN = 0;
 
     switch (GPIO_Pin)
     {
@@ -434,61 +529,51 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
         printfDma("Blue Button pressed\n");
         break;
 
-    case CHRGR_BTTN_Pin:        // Charger Button
-        // Debounce check
-        if (currentTime - lastDebounceTime_CHRGR_BTTN < DEBOUNCE_DELAY) break;
-        lastDebounceTime_CHRGR_BTTN = currentTime;
-
-        printfDma("Charger Button pressed\n");
-        BMS_ChargingButtonLogic();
-        break;
-
     default:
         break;
     }
 }
 
 
-void BMS_FaultHandler(BMS_StatusTypeDef status)
+// Charger button, polled from the timer so its pin can be set in bms_config.h
+static void BMS_PollChargerButton(void)
 {
-    const uint32_t COMMS_RETRY_DELAY = BMS_COMMS_RETRY_DELAY_MS;
-    const uint32_t COMMS_RETRY_TIMES = BMS_COMMS_RETRY_ATTEMPTS;
-    if (status & BMS_ERR_CURRENT) BMS_WriteFaultSignal(true);
+    const uint32_t DEBOUNCE_TICKS = 50 / CFG_SAFETY_TICK_MS;
+    static uint32_t pressedTicks = 0;
+    static bool handled = false;
 
-    // Disable discharge in any case
-    if (bms_wakeupChain() != BMS_OK) status |= BMS_ERR_COMMS;
-    if (bms_stopDischarge() != BMS_OK) {
-        status |= BMS_ERR_COMMS;
-        BMS_SetCommsFault(true);
-        BMS_WriteFaultSignal(true);
+    if (!BMS_GPIO_IsChargerButtonPressed())
+    {
+        pressedTicks = 0;
+        handled = false;
+        return;
+    }
+
+    if (pressedTicks < DEBOUNCE_TICKS)
+    {
+        pressedTicks++;
+    }
+    else if (!handled)
+    {
+        handled = true;
+        printfDma("Charger Button pressed\n");
+        BMS_ChargingButtonLogic();
+    }
+}
+
+
+// Non-blocking: the safety tick faults on stale data, this only gets the chain talking again.
+// A single PEC error is usually noise, so it is just retried on the next cycle. If the chain keeps
+// failing it is reset and re-initialised.
+void BMS_CommsRecovery(void)
+{
+    programStats.counter_commsError++;
+    programStats.counter_commsErrorCumulative++;
+
+    if (programStats.counter_commsError >= CFG_COMMS_RETRIES)
+    {
+        bms_softReset();
         initRequired = true;
-    }
-
-    // if currently charging:
-    if (BMS_IsCharging())
-    {
-        printfDma("Fault Detected, Disabling Charging \n");
-        BMS_EnableCharging(false);
-    }
-
-    if (status & BMS_ERR_COMMS)
-    {
-        BMS_SetCommsFault(true);
-        programStats.counter_commsError = 0;
-        for (uint32_t attempt = 0; attempt < COMMS_RETRY_TIMES; attempt++)
-        {
-            programStats.counter_commsError++;
-            programStats.counter_commsErrorCumulative++;
-            if (programStats.counter_commsError >= COMMS_RETRY_TIMES)
-            {
-                BMS_WriteFaultSignal(true);
-            }
-            HAL_Delay(COMMS_RETRY_DELAY);
-            if (bms_softReset() != BMS_OK) continue;
-            if (bms_wakeupChain() != BMS_OK) continue;
-            if (bms_readRegister(REG_SID) == BMS_OK) break;
-        }
-        initRequired = true; // Retry initialization on a later foreground pass.
     }
 }
 
@@ -513,6 +598,10 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  BMS_Safety_ForceFault();      // Safe outputs
+  // The watchdog then resets the MCU. Started here if it isn't running yet (a clock or peripheral init failed,
+  // e.g. the HSE crystal starting too slowly): a reset tries again instead of hanging until a power cycle.
+  BMS_Watchdog_Start();
   __disable_irq();
   while (1)
   {

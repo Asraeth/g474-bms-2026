@@ -1,3 +1,4 @@
+/* Historical migration fixture only. Final firmware uses Core/Inc/config/. */
 /* BRING-UP CONFIGURATION: none of these safety values is hardware-approved.
  * Inherited values are retained explicitly; new timeouts are software budgets,
  * not claims about hardware timing. Resolve every listed category before use. */
