@@ -9,13 +9,27 @@
 #define INC_BMS_CAN_H_
 
 #include "main.h"
+#include "ivt_s.h"
 
 
 #define INC_BMS_CAN_H_
 
 #define BASE_CAN_ID 0xB000
+#define BMS_CELL_CAN_ID_FIRST BASE_CAN_ID
+#define BMS_CELL_CAN_ID_LAST (BMS_CELL_CAN_ID_FIRST + TOTAL_PACK_CELLS - 1U)
+#define BMS_BOARD_CAN_ID_FIRST (BMS_CELL_CAN_ID_LAST + 1U)
+#define BMS_BOARD_CAN_ID_LAST (BMS_BOARD_CAN_ID_FIRST + TOTAL_AD68 - 1U)
 
-#define CAN_BUFFER_LEN (7 * 16 + 64)       // TODO: Accurate buffer size
+// Vehicle telemetry, after the 112 cell and 14 board IDs.
+#define BMS_PACK_CURRENT_CAN_ID  (BASE_CAN_ID + TOTAL_PACK_CELLS + TOTAL_AD68)
+#define BMS_PACK_U1_CAN_ID       (BMS_PACK_CURRENT_CAN_ID + 1U)
+#define BMS_PACK_CROSSCHECK_CAN_ID (BMS_PACK_CURRENT_CAN_ID + 2U)
+#define BMS_PACK_VALID          (1U << 0)
+#define BMS_PACK_STALE          (1U << 1)
+#define BMS_PACK_RECEIVED       (1U << 2)
+#define BMS_PACK_CONFIG_VERIFIED (1U << 3)
+
+#define CAN_BUFFER_LEN (TOTAL_PACK_CELLS + TOTAL_AD68 + 3U + 1U)
 
 typedef struct
 {
@@ -61,6 +75,7 @@ extern ChargerStatus chargerStatus;
 
 
 void BMS_CAN_Config(void);
+void BMS_CAN_GetIVTSnapshot(IVTS_Snapshot *snapshot);
 
 void BMS_CAN_SendBuffer(CanTxMsg* msgArr, uint32_t len);
 
@@ -69,5 +84,13 @@ void BMS_CAN_Test(void);
 void BMS_CAN_SendMsg(CanTxMsg msg);
 
 void BMS_CAN_GetChargerMsg(const ChargerConfiguration* config, uint8_t* data);
+
+_Static_assert(BMS_CELL_CAN_ID_LAST < BMS_BOARD_CAN_ID_FIRST, "Cell/board CAN ID overlap");
+_Static_assert(BMS_BOARD_CAN_ID_LAST < BMS_PACK_CURRENT_CAN_ID, "Board/pack CAN ID overlap");
+_Static_assert(BMS_PACK_CURRENT_CAN_ID < BMS_PACK_U1_CAN_ID && BMS_PACK_U1_CAN_ID < BMS_PACK_CROSSCHECK_CAN_ID,
+        "Pack CAN ID overlap");
+_Static_assert(BMS_PACK_CROSSCHECK_CAN_ID < CHARGER_CONFIG_CAN_ID && CHARGER_CONFIG_CAN_ID != CHARGER_STATUS_CAN_ID
+        && BMS_PACK_CROSSCHECK_CAN_ID < CHARGER_STATUS_CAN_ID, "Charger CAN ID overlap");
+_Static_assert(CAN_BUFFER_LEN == TOTAL_PACK_CELLS + TOTAL_AD68 + 4U, "Telemetry capacity mismatch");
 
 #endif /* INC_BMS_CAN_H_ */

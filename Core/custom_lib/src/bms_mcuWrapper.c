@@ -7,13 +7,33 @@
 
 #include "bms_mcuWrapper.h"
 #include "main.h"
+#include "bms_safety_config.h"
 
-#define WAKEUP_DELAY 1       /// 1ms for 2950   /* BMS ic wakeup delay  */
+#define WAKEUP_DELAY BMS_CHAIN_WAKE_PULSE_MS
 
 static TIM_HandleTypeDef *htim         = &htim2;       /* MCU TIM handler */
 
 #define GPIO_PORT   BMS_CS_GPIO_Port
 #define CS_PIN      BMS_CS_Pin
+
+uint32_t bms_enterCritical(void)
+{
+    uint32_t previousMask = __get_PRIMASK();
+    __disable_irq();
+    return previousMask;
+}
+
+void bms_exitCritical(uint32_t previousMask)
+{
+    __set_PRIMASK(previousMask);
+}
+
+bool bms_spiContextAllowed(void)
+{
+    // Blocking HAL deadlines require a running SysTick. No SPI work from an
+    // ISR or an interrupt-masked publication section.
+    return __get_IPSR() == 0 && __get_PRIMASK() == 0;
+}
 
 
 void bms_csLow(void)
@@ -49,8 +69,9 @@ uint32_t bms_getTimCount(void)
 
 
 // Wake up all the IC in the daisy chain
-void bms_wakeupChain(void)
+BMS_StatusTypeDef bms_wakeupChain(void)
 {
+    if (!bms_spiContextAllowed()) return BMS_ERR_COMMS;
     for (uint8_t ic = 0; ic < TOTAL_IC; ic++)
     {
         bms_csLow();
@@ -58,26 +79,38 @@ void bms_wakeupChain(void)
         bms_csHigh();
         HAL_Delay(WAKEUP_DELAY);
     }
+    return BMS_OK;
 }
 
 
-void bms_delayUs(uint32_t us)
+BMS_StatusTypeDef bms_delayUs(uint32_t us)
 {
-    bms_startTimer();
-    while(bms_getTimCount() < us); // Do nothing while timer still counting
+    if (!bms_spiContextAllowed() || HAL_TIM_Base_Start(htim) != HAL_OK) return BMS_ERR_COMMS;
+    uint32_t started = HAL_GetTick();
+    // Bound even a failed/stopped microsecond timer using the HAL timebase.
+    const uint32_t deadlineMs = us / 1000U + BMS_ADBMS_SPI_TIMEOUT_MS;
+    while (bms_getTimCount() < us) {
+        if ((uint32_t)(HAL_GetTick() - started) >= deadlineMs) {
+            bms_stopTimer();
+            return BMS_ERR_COMMS;
+        }
+    }
     bms_stopTimer();
+    return BMS_OK;
 }
 
 
-void bms_delayMsActive(uint32_t ms)
+BMS_StatusTypeDef bms_delayMsActive(uint32_t ms)
 {
+    if (!bms_spiContextAllowed()) return BMS_ERR_COMMS;
     for (uint32_t i = 0; i < ms; i++)
     {
         bms_csLow();
-        bms_delayUs(500);
+        if (bms_delayUs(500) != BMS_OK) { bms_csHigh(); return BMS_ERR_COMMS; }
         bms_csHigh();
-        bms_delayUs(500);
+        if (bms_delayUs(500) != BMS_OK) return BMS_ERR_COMMS;
     }
+    return BMS_OK;
 }
 
 

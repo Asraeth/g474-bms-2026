@@ -301,5 +301,9 @@ void LPUART1_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+void FDCAN2_IT0_IRQHandler(void)
+{
+    HAL_FDCAN_IRQHandler(&hfdcan2);
+}
 
 /* USER CODE END 1 */

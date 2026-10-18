@@ -9,6 +9,7 @@
 
 #include "main.h"
 #include <stdbool.h>
+#include "bms_command_counter.h"
 
 #define DATA_LEN       (6)       // Data
 #define DATAPKT_LEN    (6 + 2)   // Data + DPEC
@@ -29,15 +30,21 @@
 
 bool bms_checkRxPec(uint8_t rxData[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC], bool errorIndex[TOTAL_IC]);
 
-uint8_t bms_checkCc(uint8_t* txCc, uint8_t* rxCc);
+typedef enum {
+    BMS_TRANSPORT_OK, BMS_TRANSPORT_CONTEXT, BMS_TRANSPORT_TX,
+    BMS_TRANSPORT_RX, BMS_TRANSPORT_POLL_TIMEOUT, BMS_TRANSPORT_COMMAND
+} BMS_TransportFault;
+BMS_TransportFault bms_getTransportFault(void);
+bool bms_checkRxCounter(uint8_t cc[TOTAL_IC], const bool pecErrors[TOTAL_IC], bool errors[TOTAL_IC]);
+void bms_getCounterState(BMS_CommandCounterChain *state);
 
-void bms_transmitCmd(uint8_t cmd[CMD_LEN]);
+BMS_StatusTypeDef bms_transmitCmd(uint8_t cmd[CMD_LEN]);
 
-void bms_transmitPoll(uint8_t cmd[CMD_LEN]);
+BMS_StatusTypeDef bms_transmitPoll(uint8_t cmd[CMD_LEN]);
 
-void bms_transmitData(uint8_t cmd[CMD_LEN], uint8_t txBuffer[TOTAL_IC][DATA_LEN]);
+BMS_StatusTypeDef bms_transmitData(uint8_t cmd[CMD_LEN], uint8_t txBuffer[TOTAL_IC][DATA_LEN]);
 
-void bms_receiveData(uint8_t cmd[CMD_LEN], uint8_t rxBuffer[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC]);
+BMS_StatusTypeDef bms_receiveData(uint8_t cmd[CMD_LEN], uint8_t rxBuffer[TOTAL_IC][DATA_LEN], uint16_t rxPec[TOTAL_IC], uint8_t rxCc[TOTAL_IC]);
 
 
 

@@ -28,6 +28,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32g4xx_hal.h"
+#include "bms_topology.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -46,6 +47,7 @@ typedef enum {
     BMS_ERR_VOLTAGE = 0x02,
     BMS_ERR_TEMP    = 0x04,
     BMS_ERR_CURRENT = 0x08,
+    BMS_ERR_IVT     = 0x10, // Pack sensor invalid/missing; not an isoSPI fault.
 } BMS_StatusTypeDef;
 
 
@@ -64,11 +66,6 @@ extern FDCAN_HandleTypeDef hfdcan2;
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-#define TOTAL_CELL      16      // VALUES OTHER THAN 16 IS NOT PROPERLY HANDLED
-#define TOTAL_AD68      7
-#define TOTAL_AD29      0       // SHOULD ONLY BE EITHER 0 OR 1
-
-#define TOTAL_IC        (TOTAL_AD29 + TOTAL_AD68)
 
 #define BIT_SET(byte,nbit)   ((byte) |=  (UINT32_C(1) << (nbit)))
 #define BIT_CLEAR(byte,nbit) ((byte) &= ~(UINT32_C(1) << (nbit)))

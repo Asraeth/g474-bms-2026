@@ -17,9 +17,48 @@ volatile uint32_t txBufferHeadIndex = 0;
 volatile uint32_t txBufferTailIndex = 0;
 volatile bool isBufferTransmitting = false;
 
+static IVTS_Driver ivtSensor;
+
+void BMS_CAN_GetIVTSnapshot(IVTS_Snapshot *snapshot)
+{
+    // RX IRQ is the writer. Copy and evaluate time under one short critical
+    // section; preserve PRIMASK when called from the periodic timer ISR.
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    IVTS_GetSnapshot(&ivtSensor, HAL_GetTick(), snapshot);
+    __set_PRIMASK(primask);
+}
+
+static void configure_ivt_can(void)
+{
+    IVTS_Config config = IVTS_DefaultConfig();
+    if (!IVTS_Init(&ivtSensor, &config)) Error_Handler();
+    FDCAN_FilterTypeDef filter = {0};
+    filter.IdType = FDCAN_STANDARD_ID;
+    filter.FilterType = FDCAN_FILTER_DUAL;
+    filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    filter.FilterIndex = 0;
+    filter.FilterID1 = config.current_id;
+    filter.FilterID2 = config.u1_id;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK) Error_Handler();
+    filter.FilterIndex = 1;
+    filter.FilterID1 = filter.FilterID2 = config.response_id;
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &filter) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, FDCAN_REJECT, FDCAN_REJECT,
+            FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_ActivateNotification(&hfdcan2,
+            FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST | FDCAN_IT_BUS_OFF, 0) != HAL_OK)
+        Error_Handler();
+}
+
 
 void BMS_CAN_Config(void)
 {
+    // Both controllers use PCLK1 / 2 = 64 MHz. Do not silently change the
+    // vehicle bus timing if the board clock configuration is regenerated.
+    if (HAL_RCC_GetPCLK1Freq() != 128000000U) Error_Handler();
+    configure_ivt_can();
 //  FDCAN_FilterTypeDef sFilterConfig;
 //
 //  /* Configure Rx filter */
@@ -91,7 +130,7 @@ void BMS_CAN_Test(void)
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
 
-    const uint32_t TOTAL_MSG_ID = 7 * 16;
+    const uint32_t TOTAL_MSG_ID = TOTAL_PACK_CELLS;
     uint8_t TxData[8] = {0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF};
     static int16_t test_voltage = 3.7 * 1000;
     static int16_t test_temp    = 25 * 100;
@@ -255,20 +294,47 @@ void BMS_CAN_GetChargerMsg(const ChargerConfiguration* config, uint8_t* data)
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-    if (hfdcan == &hfdcan1)
-    {
-        if (RxFifo0ITs == FDCAN_IT_RX_FIFO0_NEW_MESSAGE)
-        {
-            FDCAN_RxHeaderTypeDef rxHeader;
-            uint8_t rxData[8];
-            HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &rxHeader, rxData);
-
-            if (rxHeader.Identifier == CHARGER_STATUS_CAN_ID)
-            {
-                parse_charger_status(rxData);
-            }
+    if (hfdcan != &hfdcan1 && hfdcan != &hfdcan2) return;
+    if (hfdcan == &hfdcan2 && (RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST)) {
+        IVTS_InvalidateTransport(&ivtSensor);
+        // Discard queued frames from the loss episode. Only later traffic
+        // can restore channel validity.
+        while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0)) {
+            FDCAN_RxHeaderTypeDef droppedHeader;
+            uint8_t droppedData[64];
+            if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &droppedHeader, droppedData) != HAL_OK) break;
+        }
+        return;
+    }
+    if (!(RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE)) return;
+    while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0)) {
+        FDCAN_RxHeaderTypeDef header;
+        uint8_t data[64]; // HAL copies up to 64 bytes before format validation.
+        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &header, data) != HAL_OK) {
+            if (hfdcan == &hfdcan2) IVTS_InvalidateTransport(&ivtSensor);
+            break;
+        }
+        if (hfdcan == &hfdcan1) {
+            if (header.Identifier == CHARGER_STATUS_CAN_ID && header.IdType == FDCAN_EXTENDED_ID
+                    && header.RxFrameType == FDCAN_DATA_FRAME && header.FDFormat == FDCAN_CLASSIC_CAN
+                    && header.DataLength == FDCAN_DLC_BYTES_8) parse_charger_status(data);
+        } else {
+            IVTS_Frame frame = {.id = header.Identifier, .dlc = header.DataLength,
+                .extended = header.IdType != FDCAN_STANDARD_ID,
+                .remote = header.RxFrameType != FDCAN_DATA_FRAME,
+                .fd = header.FDFormat != FDCAN_CLASSIC_CAN};
+            memcpy(frame.data, data, sizeof(frame.data));
+            IVTS_Receive(&ivtSensor, &frame, HAL_GetTick());
         }
     }
+}
+
+void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t ErrorStatusITs)
+{
+    if (hfdcan == &hfdcan2 && (ErrorStatusITs & FDCAN_IT_BUS_OFF))
+        IVTS_InvalidateTransport(&ivtSensor);
+    // No automatic controller/sensor reconfiguration on bus-off. Recovery
+    // requires a verified physical bus and a deliberate controller restart.
 }
 
 

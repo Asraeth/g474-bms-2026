@@ -21,6 +21,11 @@
 #include "fdcan.h"
 
 /* USER CODE BEGIN 0 */
+#include "ivt_s.h"
+
+#if IVTS_CAN_BITRATE != 250000U && IVTS_CAN_BITRATE != 500000U && IVTS_CAN_BITRATE != 1000000U
+#error "IVT-S supports only 250 kbit/s, 500 kbit/s or 1 Mbit/s"
+#endif
 
 /* USER CODE END 0 */
 
@@ -77,21 +82,22 @@ void MX_FDCAN2_Init(void)
 
   /* USER CODE END FDCAN2_Init 1 */
   hfdcan2.Instance = FDCAN2;
-  hfdcan2.Init.ClockDivider = FDCAN_CLOCK_DIV1;
+  // CKDIV is shared and written by FDCAN1 only; retain its DIV2 setting.
+  hfdcan2.Init.ClockDivider = FDCAN_CLOCK_DIV2;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
   hfdcan2.Init.AutoRetransmission = DISABLE;
   hfdcan2.Init.TransmitPause = DISABLE;
   hfdcan2.Init.ProtocolException = DISABLE;
-  hfdcan2.Init.NominalPrescaler = 16;
+  hfdcan2.Init.NominalPrescaler = 64000000U / (IVTS_CAN_BITRATE * 16U);
   hfdcan2.Init.NominalSyncJumpWidth = 1;
-  hfdcan2.Init.NominalTimeSeg1 = 1;
-  hfdcan2.Init.NominalTimeSeg2 = 1;
+  hfdcan2.Init.NominalTimeSeg1 = 13;
+  hfdcan2.Init.NominalTimeSeg2 = 2;
   hfdcan2.Init.DataPrescaler = 1;
   hfdcan2.Init.DataSyncJumpWidth = 1;
   hfdcan2.Init.DataTimeSeg1 = 1;
   hfdcan2.Init.DataTimeSeg2 = 1;
-  hfdcan2.Init.StdFiltersNbr = 0;
+  hfdcan2.Init.StdFiltersNbr = 2;
   hfdcan2.Init.ExtFiltersNbr = 0;
   hfdcan2.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan2) != HAL_OK)
@@ -185,6 +191,8 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN FDCAN2_MspInit 1 */
+    HAL_NVIC_SetPriority(FDCAN2_IT0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(FDCAN2_IT0_IRQn);
 
   /* USER CODE END FDCAN2_MspInit 1 */
   }
@@ -234,6 +242,7 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef* fdcanHandle)
     HAL_GPIO_DeInit(GPIOB, GPIO_PIN_12|GPIO_PIN_13);
 
   /* USER CODE BEGIN FDCAN2_MspDeInit 1 */
+    HAL_NVIC_DisableIRQ(FDCAN2_IT0_IRQn);
 
   /* USER CODE END FDCAN2_MspDeInit 1 */
   }

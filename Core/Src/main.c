@@ -29,6 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 #include "stdio.h"
+#include <math.h>
 
 #include "bms_cmdlist.h"
 #include "bms_datatypes.h"
@@ -75,9 +76,17 @@ typedef struct {
 ProgramStats    programStats = {0};
 ImdStatus       imdStatus = {0};
 
+// ISR publishes only raw counts. Foreground processing consumes the latest
+// coherent capture; no protection decision currently consumes imdStatus.
+static volatile struct {
+    uint32_t period;
+    uint32_t high;
+    bool pending;
+} imdCapture;
+
 volatile bool initRequired = true;
 
-const uint32_t MAIN_LOOP_DELAY = 500;
+const uint32_t MAIN_LOOP_DELAY = BMS_ACQUISITION_DELAY_MS;
 
 static const bool DEBUG_SERIAL_LOOP_TIME = true;
 
@@ -90,6 +99,7 @@ void SystemClock_Config(void);
 void BMS_WriteFanDuty(float duty);
 void BMS_WriteFaultSignal(bool state);
 void BMS_FaultHandler(BMS_StatusTypeDef status);
+static void BMS_ProcessImdCapture(void);
 
 /* USER CODE END PFP */
 
@@ -168,23 +178,22 @@ int main(void)
     uint32_t timeStart;
 
     printfDma("\n\n +++++             PROGRAM START             +++++ \n\n");
-    bms_softReset();
-    HAL_Delay(500);         // Initialisation delay
-
-    bms_wakeupChain();
-    bms_softReset();
+    if (bms_softReset() != BMS_OK) BMS_SetCommsFault(true);
+    HAL_Delay(BMS_SENSOR_STARTUP_DELAY_MS);
+    if (bms_softReset() != BMS_OK) BMS_SetCommsFault(true);
 
 
     BMS_StatusTypeDef bmsStatus;
     while (1)
     {
+        BMS_ProcessImdCapture();
         timeStart = HAL_GetTick();
 
         // Init BMS
         if (initRequired == true)
         {
             bmsStatus = bms_init();
-            if (bms_init() == BMS_OK)
+            if (bmsStatus == BMS_OK)
             {
                 initRequired = false;
             }
@@ -280,12 +289,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     static uint32_t canTiming = 0;
 
     // Voltage fault timer variables
-    const uint32_t VOLTAGE_FAULT_PERIOD = 500 - 10;
+    const uint32_t VOLTAGE_FAULT_PERIOD = BMS_VOLTAGE_FAULT_DELAY_MS;
     static uint32_t lastVoltageFaultTime = 0;
     static bool voltageFaultDetected = false;
 
     // Temperature fault Time
-    const uint32_t TEMP_FAULT_PERIOD = 1000 - 10;
+    const uint32_t TEMP_FAULT_PERIOD = BMS_TEMPERATURE_FAULT_DELAY_MS;
     static uint32_t lastTempFaultTime = 0;
     static bool tempFaultDetected = false;
 
@@ -345,8 +354,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         };
         //    const float MIN_TEMP = 0;
 
+        // Check IVT independently of the slower acquisition loop. Stale/missing
+        // pack data must not be cleared by a healthy isoSPI communications flag.
+        bool packSensorOK = BMS_CheckPackSensor() == BMS_OK;
+        bool adbmsDataOK = BMS_CheckAdbmsData() == BMS_OK;
+        bool currentOK = BMS_CheckCurrent() == BMS_OK;
+        if (!packSensorOK || !adbmsDataOK || !currentOK)
+        {
+            BMS_EnableBalancing(false);
+            BMS_WriteFaultSignal(true);
+            if (BMS_IsCharging()) BMS_EnableCharging(false);
+        }
+
         // Disable fault signal only if everything is OK
-        if (!tempFaultDetected && !voltageFaultDetected && (BMS_CheckCommsFault() == BMS_OK))
+        if (!tempFaultDetected && !voltageFaultDetected && (BMS_CheckCommsFault() == BMS_OK)
+                && packSensorOK && adbmsDataOK && currentOK)
         {
             BMS_WriteFaultSignal(false);
         }
@@ -361,18 +383,36 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 }
 
 
+static void BMS_ProcessImdCapture(void)
+{
+    // Only copy/acknowledge the ISR snapshot while interrupts are masked.
+    // An interrupt after this copy remains pending for the next foreground pass.
+    uint32_t mask = bms_enterCritical();
+    const bool pending = imdCapture.pending;
+    const uint32_t period = imdCapture.period;
+    const uint32_t high = imdCapture.high;
+    imdCapture.pending = false;
+    bms_exitCritical(mask);
+    if (!pending) return;
+
+    imdStatus.period = period;
+    if (period != 0) {
+        const uint32_t clockFreq = UINT32_C(128000000); // Existing timer clock assumption.
+        // uint32 counts convert exactly to double; high*100 stays below 2^39.
+        // Preserve the original duty/frequency arithmetic outside the ISR.
+        imdStatus.duty = (float)(((double)high * 100.0) / (double)period);
+        imdStatus.freq = clockFreq / period;
+    }
+}
+
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
     if (htim == &htim15)   // PWM input
     {
-        const uint32_t clockFreq = 128 * 1000 * 1000; // in Hz
-
-        imdStatus.period = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-        if (imdStatus.period != 0)
-        {
-            imdStatus.duty = (HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2)*100.0) / imdStatus.period;
-            imdStatus.freq = (clockFreq/imdStatus.period);
-        }
+        const uint32_t period = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
+        imdCapture.period = period;
+        imdCapture.high = period != 0 ? HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2) : 0;
+        imdCapture.pending = true;
     }
 }
 
@@ -411,12 +451,18 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 void BMS_FaultHandler(BMS_StatusTypeDef status)
 {
-    const uint32_t COMMS_RETRY_DELAY = 250;
-    const uint32_t COMMS_RETRY_TIMES = 2;
+    const uint32_t COMMS_RETRY_DELAY = BMS_COMMS_RETRY_DELAY_MS;
+    const uint32_t COMMS_RETRY_TIMES = BMS_COMMS_RETRY_ATTEMPTS;
+    if (status & BMS_ERR_CURRENT) BMS_WriteFaultSignal(true);
 
     // Disable discharge in any case
-    bms_wakeupChain();
-    bms_stopDischarge();
+    if (bms_wakeupChain() != BMS_OK) status |= BMS_ERR_COMMS;
+    if (bms_stopDischarge() != BMS_OK) {
+        status |= BMS_ERR_COMMS;
+        BMS_SetCommsFault(true);
+        BMS_WriteFaultSignal(true);
+        initRequired = true;
+    }
 
     // if currently charging:
     if (BMS_IsCharging())
@@ -425,12 +471,11 @@ void BMS_FaultHandler(BMS_StatusTypeDef status)
         BMS_EnableCharging(false);
     }
 
-    switch (status)
+    if (status & BMS_ERR_COMMS)
     {
-    case BMS_ERR_COMMS:
         BMS_SetCommsFault(true);
         programStats.counter_commsError = 0;
-        do
+        for (uint32_t attempt = 0; attempt < COMMS_RETRY_TIMES; attempt++)
         {
             programStats.counter_commsError++;
             programStats.counter_commsErrorCumulative++;
@@ -439,21 +484,17 @@ void BMS_FaultHandler(BMS_StatusTypeDef status)
                 BMS_WriteFaultSignal(true);
             }
             HAL_Delay(COMMS_RETRY_DELAY);
-            bms_softReset();
-            bms_wakeupChain();
+            if (bms_softReset() != BMS_OK) continue;
+            if (bms_wakeupChain() != BMS_OK) continue;
+            if (bms_readRegister(REG_SID) == BMS_OK) break;
         }
-        while (bms_readRegister(REG_SID) != BMS_OK);
-
-        initRequired = true; // After comms is OK, redo init
-        break;
-    default:
-        break;
+        initRequired = true; // Retry initialization on a later foreground pass.
     }
 }
 
 void BMS_WriteFanDuty(float duty)
 {
-    if (duty > 1 || duty <= 0)
+    if (!isfinite(duty) || duty > 1 || duty <= 0)
         return;
 
     duty = 1 - duty;

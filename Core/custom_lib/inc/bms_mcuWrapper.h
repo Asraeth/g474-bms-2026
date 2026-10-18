@@ -8,6 +8,12 @@
 #pragma once
 
 #include "stdint.h"
+#include <stdbool.h>
+#include "main.h"
+
+uint32_t bms_enterCritical(void);
+void bms_exitCritical(uint32_t previousMask);
+bool bms_spiContextAllowed(void);
 
 // Chip select
 void bms_csLow(void);
@@ -21,10 +27,10 @@ uint32_t bms_getTimCount(void);  // Get time elapsed in us
 
 
 // Wake up all the IC in the daisy chain
-void bms_wakeupChain(void);
+BMS_StatusTypeDef bms_wakeupChain(void);
 
 // Microsecond delay
-void bms_delayUs(uint32_t us);
+BMS_StatusTypeDef bms_delayUs(uint32_t us);
 
 // Microsecond delay while preventing isospi sleep
-void bms_delayMsActive(uint32_t ms);
+BMS_StatusTypeDef bms_delayMsActive(uint32_t ms);
