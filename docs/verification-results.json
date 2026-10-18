@@ -1,0 +1,2278 @@
+{
+  "verified_local_date": "2026-10-19",
+  "hardware_validation": "PENDING",
+  "toolchain": "Ubuntu WSL GCC for simulation; STM32 ARM GCC for target",
+  "digital": {
+    "profile4-normal": {
+      "passed": 91,
+      "failed": 0,
+      "results": [
+        {
+          "name": "numeric_and_imd_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charger_documented_codec",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "versioned_config",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "transaction_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot_u1_disabled",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_layout",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "glitch_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_spike_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "pec_noise",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing_hysteresis",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "leds",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charging",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_no_ack",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_bus_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle_u1_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_then_ivt",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_then_slaves",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_chain_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_chaos",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "slave_reset_restored",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_lost_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_overcurrent",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "overcurrent_pulses",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_glitches_periodic",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_low_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_high_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_junk_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_energy_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_spurious_alive",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_stray_stop",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_restart_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_config_interrupted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_cleared",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_system_error_kept",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_error_clear_limit",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_during_disturbance",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_flood",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "temperature_table_edges",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_model",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_startup",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "energy_tracking",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "inverter_limits",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_save_wear",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_long_dlc",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_ring_wrap",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_fuzz",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_foreign_record",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_nominal",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_timeout_retry",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_fault_abort",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_sdc_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_while_faulted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_bad_battery_voltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ts_request_abuse",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_value_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_1",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_2",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_3",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undervoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undertemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_temp_sensor_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_slave_die_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_open_sense_wire",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_discharge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_charge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_ivt_range",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_implausible",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_lost",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_sensor_error",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_isospi_chain_broken",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_spi_timeout",
+          "pass": true,
+          "returncode": 0
+        }
+      ],
+      "dbc_actual_traffic": "PASS",
+      "soc_spreadsheet": "PASS"
+    },
+    "profile4-ubsan": {
+      "passed": 91,
+      "failed": 0,
+      "results": [
+        {
+          "name": "numeric_and_imd_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charger_documented_codec",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "versioned_config",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "transaction_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot_u1_disabled",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_layout",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "glitch_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_spike_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "pec_noise",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing_hysteresis",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "leds",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charging",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_no_ack",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_bus_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle_u1_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_then_ivt",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_then_slaves",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_chain_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_chaos",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "slave_reset_restored",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_lost_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_overcurrent",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "overcurrent_pulses",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_glitches_periodic",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_low_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_high_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_junk_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_energy_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_spurious_alive",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_stray_stop",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_restart_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_config_interrupted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_cleared",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_system_error_kept",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_error_clear_limit",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_during_disturbance",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_flood",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "temperature_table_edges",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_model",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_startup",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "energy_tracking",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "inverter_limits",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_save_wear",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_long_dlc",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_ring_wrap",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_fuzz",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_foreign_record",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_nominal",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_timeout_retry",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_fault_abort",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_sdc_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_while_faulted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_bad_battery_voltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ts_request_abuse",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_value_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_1",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_2",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_3",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undervoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undertemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_temp_sensor_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_slave_die_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_open_sense_wire",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_discharge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_charge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_ivt_range",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_implausible",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_lost",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_sensor_error",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_isospi_chain_broken",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_spi_timeout",
+          "pass": true,
+          "returncode": 0
+        }
+      ],
+      "dbc_actual_traffic": "PASS",
+      "soc_spreadsheet": "PASS"
+    },
+    "profile4-normal-pessimistic": {
+      "passed": 91,
+      "failed": 0,
+      "results": [
+        {
+          "name": "numeric_and_imd_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charger_documented_codec",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "versioned_config",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "transaction_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot_u1_disabled",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_layout",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "glitch_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_spike_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "pec_noise",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing_hysteresis",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "leds",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charging",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_no_ack",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_bus_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle_u1_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_then_ivt",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_then_slaves",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_chain_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_chaos",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "slave_reset_restored",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_lost_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_overcurrent",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "overcurrent_pulses",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_glitches_periodic",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_low_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_high_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_junk_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_energy_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_spurious_alive",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_stray_stop",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_restart_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_config_interrupted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_cleared",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_system_error_kept",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_error_clear_limit",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_during_disturbance",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_flood",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "temperature_table_edges",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_model",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_startup",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "energy_tracking",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "inverter_limits",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_save_wear",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_long_dlc",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_ring_wrap",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_fuzz",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_foreign_record",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_nominal",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_timeout_retry",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_fault_abort",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_sdc_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_while_faulted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_bad_battery_voltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ts_request_abuse",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_value_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_1",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_2",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_3",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undervoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undertemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_temp_sensor_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_slave_die_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_open_sense_wire",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_discharge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_charge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_ivt_range",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_implausible",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_lost",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_sensor_error",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_isospi_chain_broken",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_spi_timeout",
+          "pass": true,
+          "returncode": 0
+        }
+      ],
+      "dbc_actual_traffic": "PASS",
+      "soc_spreadsheet": "PASS"
+    },
+    "profile4-normal-wrap": {
+      "passed": 91,
+      "failed": 0,
+      "results": [
+        {
+          "name": "numeric_and_imd_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charger_documented_codec",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "versioned_config",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "transaction_contract",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "boot_u1_disabled",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_layout",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "glitch_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_spike_immunity",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "pec_noise",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "balancing_hysteresis",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "leds",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "charging",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_no_ack",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_bus_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_power_cycle_u1_off",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_late",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_slaves_then_ivt",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_on_ivt_then_slaves",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_ivt_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_slave_long",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "dropout_chain_brief",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_chaos",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "slave_reset_restored",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "isospi_lost_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_overcurrent",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "overcurrent_pulses",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "current_glitches_periodic",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "intermittent_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_low_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_flood_high_priority",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can2_junk_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_energy_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_spurious_alive",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_stray_stop",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_restart_command",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_config_interrupted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_cleared",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_system_error_kept",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_error_clear_limit",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_can_errors_during_disturbance",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_flood",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "temperature_table_edges",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_model",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soc_startup",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "energy_tracking",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "inverter_limits",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_save_wear",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "can_long_dlc",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "uart_ring_wrap",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_fuzz",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "settings_foreign_record",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_nominal",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_timeout_retry",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_fault_abort",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_sdc_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_while_faulted",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "precharge_bad_battery_voltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ts_request_abuse",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "ivt_value_extremes",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_1",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_2",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "soak_3",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undervoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_cell_undertemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_temp_sensor_open",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_slave_die_overtemp",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_open_sense_wire",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_discharge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_charge",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_overcurrent_ivt_range",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_overvoltage",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_pack_implausible",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_lost",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_ivt_sensor_error",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_isospi_chain_broken",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fault_spi_timeout",
+          "pass": true,
+          "returncode": 0
+        }
+      ],
+      "dbc_actual_traffic": "PASS",
+      "soc_spreadsheet": "PASS"
+    }
+  },
+  "power_window_variant": {
+    "profile4-normal": {
+      "passed": 7,
+      "failed": 0,
+      "results": [
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        }
+      ]
+    },
+    "profile4-ubsan": {
+      "passed": 7,
+      "failed": 0,
+      "results": [
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        }
+      ]
+    },
+    "profile4-normal-pessimistic": {
+      "passed": 7,
+      "failed": 0,
+      "results": [
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        }
+      ]
+    },
+    "profile4-normal-wrap": {
+      "passed": 7,
+      "failed": 0,
+      "results": [
+        {
+          "name": "boot",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "fast_frames",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_sustained",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_bursts",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "power_window_random",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "load_swings",
+          "pass": true,
+          "returncode": 0
+        },
+        {
+          "name": "limiter_boundaries",
+          "pass": true,
+          "returncode": 0
+        }
+      ]
+    }
+  },
+  "migrated_contracts": {
+    "migrated": [
+      {
+        "name": "ivt",
+        "pass": true
+      },
+      {
+        "name": "counter",
+        "pass": true
+      },
+      {
+        "name": "transport",
+        "pass": true
+      }
+    ],
+    "migrated-ubsan": [
+      {
+        "name": "ivt",
+        "pass": true
+      },
+      {
+        "name": "counter",
+        "pass": true
+      },
+      {
+        "name": "transport",
+        "pass": true
+      }
+    ]
+  },
+  "register_layout": {
+    "arm": {
+      "target": "arm",
+      "pass": true,
+      "vectors": {
+        "probe_cfa": "85a5985a0216",
+        "probe_cfb": "bc3a12aa0180",
+        "probe_pwma": "21436587a9cb",
+        "probe_pwmb": "ed1f00000000",
+        "probe_adcv": "03f6",
+        "probe_adsv": "01e9",
+        "probe_adax": "05da"
+      }
+    },
+    "host": {
+      "target": "host",
+      "pass": true,
+      "vectors": {
+        "probe_cfa": "85a5985a0216",
+        "probe_cfb": "bc3a12aa0180",
+        "probe_pwma": "21436587a9cb",
+        "probe_pwmb": "ed1f00000000",
+        "probe_adcv": "03f6",
+        "probe_adsv": "01e9",
+        "probe_adax": "05da"
+      }
+    }
+  },
+  "profiles": {
+    "passed": 9,
+    "results": [
+      {
+        "name": "lead",
+        "pass": true,
+        "expected_compile": true
+      },
+      {
+        "name": "v3",
+        "pass": true,
+        "expected_compile": true
+      },
+      {
+        "name": "bench",
+        "pass": true,
+        "expected_compile": true
+      },
+      {
+        "name": "digital",
+        "pass": true,
+        "expected_compile": true
+      },
+      {
+        "name": "digital_on_arm",
+        "pass": true,
+        "expected_compile": false
+      },
+      {
+        "name": "duplicate_temperature",
+        "pass": true,
+        "expected_compile": false
+      },
+      {
+        "name": "temperature_out_of_range",
+        "pass": true,
+        "expected_compile": false
+      },
+      {
+        "name": "led_temperature_overlap",
+        "pass": true,
+        "expected_compile": false
+      },
+      {
+        "name": "duplicate_leds",
+        "pass": true,
+        "expected_compile": false
+      }
+    ]
+  },
+  "arm_builds": {
+    "debug-profile1": {
+      "pass": true,
+      "warnings": 0,
+      "errors": 0,
+      "elf_sha256": "2a5a2210acaf989b317273d9730b889e9cdb34fdf84fb1df1d314c403a5345dc",
+      "elf_bytes": 1880780,
+      "flags": "-Wall -Werror; Core also -Wextra -Wshadow -Wformat=2"
+    },
+    "debug-profile3": {
+      "pass": true,
+      "warnings": 0,
+      "errors": 0,
+      "elf_sha256": "4fa2aba3ccb53a0984fb263dae8c7500072ae9c87b2ad36d303dd942f3827f6a",
+      "elf_bytes": 1880720,
+      "flags": "-Wall -Werror; Core also -Wextra -Wshadow -Wformat=2"
+    },
+    "release-profile1": {
+      "pass": true,
+      "warnings": 0,
+      "errors": 0,
+      "elf_sha256": "4247c38c8a4fb6d4c5a80b42e4aa5c6724e7f6bd30b3be3e2e74de6cd8ab2ffd",
+      "elf_bytes": 133432,
+      "flags": "-Wall -Werror; Core also -Wextra -Wshadow -Wformat=2"
+    },
+    "release-profile3": {
+      "pass": true,
+      "warnings": 0,
+      "errors": 0,
+      "elf_sha256": "69a196a6a2e9cf0cdd3d272176fcc9f299c3a8c91faeedea1189eca9e76d8a87",
+      "elf_bytes": 133432,
+      "flags": "-Wall -Werror; Core also -Wextra -Wshadow -Wformat=2"
+    }
+  },
+  "gui": {
+    "passed": 18,
+    "failed": 0,
+    "skipped": 0,
+    "command": "python -m unittest discover -s tests -v",
+    "includes": [
+      "actual firmware telemetry replay",
+      "112 positions and raw AUX",
+      "virtual CAN settings",
+      "BENCH topology write gate"
+    ]
+  },
+  "bench": [
+    {
+      "name": "bench_contract",
+      "pass": true,
+      "returncode": 0
+    }
+  ],
+  "totals": {
+    "digital_scenarios": 364,
+    "power_variant_scenarios": 28,
+    "bench_scenarios": 1,
+    "migrated_executables": 6,
+    "profile_contracts": 9,
+    "layout_vectors": 14,
+    "gui_tests": 18,
+    "arm_builds": 4,
+    "dbc_checks": 4,
+    "soc_checks": 4,
+    "failed": 0
+  },
+  "production_sources_sha256": {
+    "Core/custom_lib/inc/bms_adc.h": "1ff806a7481a4ff17c78b1a8452c0c8f2a7b6a7b0970373908bcf0d6c378e850",
+    "Core/custom_lib/inc/bms_charger_codec.h": "3adc136396cf1087b0ec818c21583eb696ea0c5ad2bea6937df96f8196462f5f",
+    "Core/custom_lib/inc/bms_cmdlist.h": "136f4d96801fa134bedb1551ba4342cc7d1bd9007393185712bdaa218f2db3a4",
+    "Core/custom_lib/inc/bms_command_counter.h": "d3f27a4205c0e8776ab811b9fd880e85d195776018843be14790d515f68d32a3",
+    "Core/custom_lib/inc/bms_datatypes.h": "0d5a0e3cac7f0cb3f662099c9249deb3754ba15f89a01fa531f761a5ca37bdbc",
+    "Core/custom_lib/inc/bms_libWrapper.h": "0fb94657a309d7431bf680d34bd7346ce9127db27e058d7b1ab909518bbab288",
+    "Core/custom_lib/inc/bms_mcuWrapper.h": "257596488474a3b351dc51d61c395f31dd3cc58ce297ef7a9120aa02d71ec589",
+    "Core/custom_lib/inc/bms_utility.h": "ac38d6ed19f724610d479ff77a37ada4d2e0a6b51339b7df4ef4279094bc241a",
+    "Core/custom_lib/inc/ivt_s.h": "5e717e715ed874054aa67ce5599fa9d1556c24cf5a87650c5e3845810e6900ac",
+    "Core/custom_lib/src/bms_charger_codec.c": "cc1aa91328b67c4e78bcec9f3385cd5f6abac8f5bc7b360593ff673b12c25d10",
+    "Core/custom_lib/src/bms_cmdlist.c": "5fdd5645a36c9e2c4c8503609226e50c07eb7beef2f92a653819fec17526cbdf",
+    "Core/custom_lib/src/bms_command_counter.c": "f53717d98951ec59ca1913fb510edef359709e1cc20c1f05bdd4be528bd2e948",
+    "Core/custom_lib/src/bms_libWrapper.c": "160af246b60b36a725aa84b688fadb97776eed8975fc75915670dc6c06aeeaca",
+    "Core/custom_lib/src/bms_mcuWrapper.c": "b9ae9e904db2b8fd90ffa9fa8abe10196b3bb3d290a20c5ffec7daf775e2aecf",
+    "Core/custom_lib/src/bms_utility.c": "6f558b43111c63ac5aa2e7e5aa30638cd9381a62fda24c68a9d0ccc525d01365",
+    "Core/custom_lib/src/ivt_s.c": "eed641f8d0e5f805181cf2e1d59ad7a58b31d6ede4ff630f99a5e7d07df92e4e",
+    "Core/Inc/bms_can.h": "0c648b408730343e8f8661f05dd5030f6ca0d6278244a676431abbf063f46265",
+    "Core/Inc/bms_charger.h": "66cfd9ba28af2985a9771e70154ac69c2508fb7b72fc34db4e5d761e003781bd",
+    "Core/Inc/bms_config.h": "ebf4250d0ddd75ed5e6f1d42fcfb3f32e3779af62d7e761d143178ec6027bcd6",
+    "Core/Inc/bms_config_local.h.example": "a1a06576b843e59d1ec76c267227efc28c9574783c14e4e229506ff6e292e271",
+    "Core/Inc/bms_gpio.h": "7e9e95237c22efd24c216dcdff05ac80b69ef328fe5b747ef427c043c87c5e61",
+    "Core/Inc/bms_health.h": "be05c3ae7d121d992e4f96589bedabe2fbb26e9b093cfe69926b27cd4b551524",
+    "Core/Inc/bms_inverter.h": "59c2923817bb00dc4d54f5f95e05dcbd32044d929ed83614b81968ec5faa74c0",
+    "Core/Inc/bms_ivt.h": "e794202602aa2a1e1ef39f6f5580c17cfd5a34674bc4266da975eaeb081fccd1",
+    "Core/Inc/bms_precharge.h": "75251e27bc5b86cca093eb4c39d89335306ccc5786bfff94af5d3e95b885bf19",
+    "Core/Inc/bms_safety.h": "ace3215a2d9d056fea00e38a93d3af81bb0d05917fdea49c22b47c01ff28474b",
+    "Core/Inc/bms_settings.h": "6210d7928a80e9da28af38763147b9dc29f8d3815b5ae38194c7ce6b97d90bb6",
+    "Core/Inc/bms_soc.h": "bb7fa9b3c70db566ea76fb50da9279d25dd7c3b1cbcff5be4d6ff254d2fe3047",
+    "Core/Inc/bms_topology.h": "48c9da3fa747c2bf9c529e9262b3a550044ca4e7497c9f66026773060409e020",
+    "Core/Inc/config/bms_bus_config.h": "8bd084942f611d7a1490e882c7061ba0a6c3cfd171bd284589240d08802dcb21",
+    "Core/Inc/config/bms_protocol_config.h": "b2ea37f5ee89733a870f3028587ff6e67f7b45dae4a079ff16798fab8b2dc597",
+    "Core/Inc/config/bms_safety_limits.h": "085559293c1f90a251822f9d423649bf8eb5f0e637dcbd3d2546fcf0e8920fcc",
+    "Core/Inc/config/bms_sensor_calibration.h": "316738432b03cd172e96841bdaa6ea91f1484a0e787db9c6713419db8acb2ca0",
+    "Core/Inc/config/bms_sensor_config.h": "0076607b4f2194a023a46a33be9778f8e0bb4267e341a1635017638f83a29f65",
+    "Core/Inc/config/bms_topology_config.h": "68d4122319af3cd235b9e88a2c391420ede52966971dab4a5c61f653ddd405e8",
+    "Core/Inc/config/bms_vehicle_config.h": "41df69947ece89a0562f7a31b8b7ad12fcd43e8bde88edaf0422d9dcc900ccb2",
+    "Core/Inc/dma.h": "4800df9bb60edf45f266a060814fd4199270adcfe90c635f4a3d1d3fa10b4f3a",
+    "Core/Inc/fdcan.h": "6040912db1b6c7de55c40ac6b27b0cae6555eac3ea65d18307778dc0795ab15c",
+    "Core/Inc/gpio.h": "92b391aae985f5b7b6fcbfc37daf922842a683a44045b4d55712007e860ec0ef",
+    "Core/Inc/main.h": "fe616bb8e1b494be1fc7450d83aa91e286c06d31c92d4fb76c5d77f5cf68c7a5",
+    "Core/Inc/profiles/bms_board_profile.h": "59b850e44e5c34d7cc4de118be463d527a3b87589c90e6b7fa9bf041039769b3",
+    "Core/Inc/profiles/bms_mcu_routes.h": "21d1a1ee48c8e2fd7ebcd0eeaacee6a67c36f89e1837bb9fa7a4fb6ba7f82fd4",
+    "Core/Inc/profiles/board_bench.h": "957e6971d488e22fb2c91f1c382881eea8a1cff8d170f3fab31d62f3b12c955f",
+    "Core/Inc/profiles/board_digital.h": "436d16fcddd69a3d9d443eb1317f9efef6c0893d0ff310cbc092fe3f5235845b",
+    "Core/Inc/profiles/board_lead.h": "b664affa763fcfa9043b03b019c503826316b51c89ea8eb29bdfa6163ae4e8a9",
+    "Core/Inc/profiles/board_v3.h": "75272e6eb895438808a8db9f7743edcefb21f4d0e314f114a7ca9c82f970b8dd",
+    "Core/Inc/spi.h": "a9b111eedb691cff6824c18970d6393eab956b0511845e54cbd6c847faf4e891",
+    "Core/Inc/stm32g4xx_hal_conf.h": "fcd823c0b420fc0472aef4dcaff4ad681ce6986d07341cbe305ad778b1452a74",
+    "Core/Inc/stm32g4xx_it.h": "57d67ebf2e33b4fbf3e9c982d49725934397e55f8c54b7e9f2ba32ec7142184e",
+    "Core/Inc/tim.h": "19edadc04ecc395aa719cd75b9313aeb4facc35124e4f78a46e847d576f2310e",
+    "Core/Inc/uartDMA.h": "91a55b8b8b08e9c50ad1a2f646d942df6f4f86569d4d90fae81e16d8f141e8fb",
+    "Core/Inc/usart.h": "d0627baabcf5e72150a7dec634e42ab4b868176d6b858c12912842b094c81fee",
+    "Core/Src/bms_can.c": "cdec876c834ba18a44d1d9fd52dc4a32e803c8ead659edcccafee37fed5c7cab",
+    "Core/Src/bms_charger.c": "5b9a2c8e2e5132fc9600fb453b486f2ccf35646c5bb949f37d36962bfdfe7084",
+    "Core/Src/bms_gpio.c": "6df4ad32fab0c29faa17a0690b677ff2c4b8d3fc4e72da63d57075b7e859f6e0",
+    "Core/Src/bms_health.c": "36c77799a46f8ca126b6da4ba50e8484aadd79051bd9d7de90c47454c0b33bc6",
+    "Core/Src/bms_inverter.c": "3487bcbaf3a08e85ba65b03f6f29c6a415abc80655d5193588db06087f020e20",
+    "Core/Src/bms_ivt.c": "19d577284826e575a5cfeb4d55eb84a1f727375761fb549c8903c928a092bf1a",
+    "Core/Src/bms_precharge.c": "5ab929ab04390fd70ed4005824744f997a6d94e2cda059fc1cd700ef87f4d1bd",
+    "Core/Src/bms_safety.c": "89fc24f13f53425c9da67ccf22bc593764b40a71ce8d2148a51dd83270c66904",
+    "Core/Src/bms_settings.c": "0eba36d86148be008c31a3d2b36fb20de2831a8656e3c5f8c8ce2f40061c93fd",
+    "Core/Src/bms_soc.c": "685ec67df2ac6ae144560931f83378ac8e90def05141e554d0fee8e7c9cada7b",
+    "Core/Src/dma.c": "f87c27d3470fa9fd71a82a08827d8e8bb6fa06829382ef0571d7cc6ef492d578",
+    "Core/Src/fdcan.c": "6515c3042fc72aeac2b9fe4fff6ada75ab363e68778720cceae217411f4fb57e",
+    "Core/Src/gpio.c": "e4a4c6925354a6a7c67161d6edf1c96e196cbc8dd44cf07886baaf1b206c8964",
+    "Core/Src/main.c": "2a556f0dd414429ae09ab6fea8b75fb7fdd93bd7271797b9bc1b26c8ce2a098e",
+    "Core/Src/spi.c": "664405f93538c7bd8eec968a2b0e33dfb8bddf79e5d093c0d8f8da8dedbc49c0",
+    "Core/Src/stm32g4xx_hal_msp.c": "9e6a33112b4860c8c139c48ec069c39b78d263e832cff5ab29315200152f9cb4",
+    "Core/Src/stm32g4xx_it.c": "c0d3a3105ebb266aae0571c13964860cfbe31095abbd176280062e7f08b8169f",
+    "Core/Src/syscalls.c": "f772e8cdb32eb5216a3be61596216fcfee47e93202e644bea879f745c4db77b1",
+    "Core/Src/sysmem.c": "ca25d4ef17f7fb7b281008f3373bd280b662e60b5f0738e484ebe0192c3d1e8d",
+    "Core/Src/system_stm32g4xx.c": "875f78f4a45764120e7626493e10a826cd936404c727131ffc15b4d18982b94c",
+    "Core/Src/tim.c": "ea3428f02bb2edbab3c4633ae58eed409289ea62bdd3eea41e79bdf72db6ea0e",
+    "Core/Src/uartDMA.c": "58c9719798cf19221aab129e13c3f44aa3b4d32097058ea9a87180732fa51e7a",
+    "Core/Src/usart.c": "242c5d8ed66fe40b29164d5ce11923b67c2de214c0ac302c656aae11188c4040",
+    "Core/Startup/startup_stm32g474retx.s": "2d1952a86701643338fbe284341c9099f96a52608d40cbda35212bf14375ad2a"
+  },
+  "canonical_registry_sha256": "b7faec22cad0e6f6107c26b50e9765fcc1d1434db3f9fad0fe4648023a7183d2"
+}

@@ -11,7 +11,7 @@ CAN ID,ID Type,Rate (Hz),Bit Position,Bit Length,Byte Order,Signed,Frame Name,Ch
 0xB201,Extended,10,3,1,Little,no,BMS_Status,Fault_Current,,bool,y = x,0,1,BMS,n/a,,
 0xB201,Extended,10,4,1,Little,no,BMS_Status,Fault_OpenWire,,bool,y = x,0,1,BMS,n/a,,
 0xB201,Extended,10,5,1,Little,no,BMS_Status,Fault_IVT,,bool,y = x,0,1,BMS,n/a,,
-0xB201,Extended,10,7,1,Little,no,BMS_Status,Fault_Can,,bool,y = x,0,1,BMS,n/a,,
+0xB201,Extended,10,7,1,Little,no,BMS_Status,Fault_CAN,,bool,y = x,0,1,BMS,n/a,,
 0xB201,Extended,10,6,1,Little,no,BMS_Status,Fault_Startup,,bool,y = x,0,1,BMS,n/a,,
 0xB201,Extended,10,8,1,Little,no,BMS_Status,Fault_Output_Active,,bool,y = x,0,1,BMS,n/a,,AMS fault output to the SDC latch
 0xB201,Extended,10,9,1,Little,no,BMS_Status,TSAC_Ready,,bool,y = x,0,1,BMS,n/a,,TSAC ready relay on

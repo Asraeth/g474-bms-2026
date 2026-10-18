@@ -108,7 +108,7 @@
 #define CFG_SETTING_TEMP_LIMIT_MIN_C  30.0f
 
 #define CFG_CHARGER_CURRENT_A         1.0f    // VERIFY: default charge current (the old hard-coded value)
-#define CFG_CHARGER_CURRENT_MAX_A     9.9f   // VERIFY: cells' max charge current (VTC6 5 A x 7p) and the charger's rating
+#define CFG_CHARGER_CURRENT_MAX_A     9.9f   // Six-digit BCD codec ceiling at 0.1 A setting resolution; physical charger rating still requires approval
 #define CFG_CHARGER_VOLTAGE_V         (CFG_TOTAL_CELLS * 4.02f)     // Default: 4.02 V per cell (450 V for 112 cells)
 #define CFG_CHARGER_VOLTAGE_MAX_V     (CFG_TOTAL_CELLS * (CFG_CELL_OV_V - 0.05f))   // 50 mV per cell below the OV trip
 

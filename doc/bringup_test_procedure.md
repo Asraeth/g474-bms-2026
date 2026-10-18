@@ -1,5 +1,7 @@
 <!-- Generated from doc/bringup_test_procedure.md.in by tools/generate.py with the values in Core/Inc/bms_config.h. Edit the template, not this file. -->
 
+> Historical detailed reference. Use [the staged BENCH guide](../docs/TOMORROW-BENCH-BRINGUP.md) for physical testing. This template uses the 14-board digital reference configuration; its Celsius/actuation exercises require confirmed profiles and are not instructions to enable outputs on BENCH hardware.
+
 # BMS bring-up test procedure
 
 Hardware checks for the parts the PC test suite can't cover: real isoSPI signalling, ADC readings,

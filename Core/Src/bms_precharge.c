@@ -15,6 +15,7 @@
 
 #include "bms_precharge.h"
 #include "bms_safety.h"
+#include "bms_health.h"
 #include "bms_gpio.h"
 #include "bms_ivt.h"
 #include "bms_libWrapper.h"
@@ -39,6 +40,7 @@ void BMS_Precharge_HandleRequest(bool activate)
     {
         requestRising = true;
     }
+    if (!activate) BMS_Health_ClearRecovered(BMS_ERR_PRECHARGE);
     requestActive = activate;
     requestSeen   = true;
     requestTick   = HAL_GetTick();
@@ -51,6 +53,7 @@ static void enter(PrechargeState next, const char* reason)
     {
         printfDma("Precharge: %s\n", reason);
     }
+    if (next == PRECHARGE_FAILED) BMS_Health_Latch(BMS_ERR_PRECHARGE);
     state = next;
     stateTick = HAL_GetTick();
 }

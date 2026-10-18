@@ -5,6 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[1]
 if not (a.gui/'bms_gui.py').is_file():sys.exit('Destination is not the GUI fork')
 files={root/'can'/n:a.gui/'protocol'/n for n in ['bms_can1.dbc','ivt_can2.dbc','charger_can3.dbc','registry.json']}
 files[root/'can/bms_model.json']=a.gui/'bms_model.json'
+files[root/'can/bms_model_bench.json']=a.gui/'bms_model_bench.json'
 changed=[]
 for src,dst in files.items():
  if not dst.exists() or src.read_bytes()!=dst.read_bytes():

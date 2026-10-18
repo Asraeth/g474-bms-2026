@@ -13,7 +13,7 @@
  */
 #define CFG_CAN1_BITRATE            1000000 // Every node on the car bus has to match, the HV500 included
 #define CFG_CAN2_BITRATE            500000  // IVT-S factory default
-#define CFG_CAN3_BITRATE            500000  // VERIFY with the new charger (the current charger frames are Elcon/TC: 250 kbit/s)
+#define CFG_CAN3_BITRATE            500000  // Current charger gateway documentation; verify installed gateway revision
 
 /*
  * CAN1 traffic, 29-bit IDs, little-endian:

@@ -65,13 +65,13 @@ Historical migration fixtures are retained in `tests/`; final-driver contract te
 | CAN2 | 500 kbit/s | Inside the TSAC: the IVT-S |
 | CAN3 | 500 kbit/s | Charger |
 
-CAN1, **1 Mbit/s** (every node on the car bus must match, the HV500 included), 29-bit IDs, 8 bytes, little-endian. IDs 0x0000-0x0003 are the inverter's (DTI protocol: packet ID << 8 | node ID); the BMS uses 0xB000 and up, so inverter frames win arbitration.
+CAN1, **1 Mbit/s** (every node on the car bus must match, the HV500 included), 29-bit IDs, 8 bytes, little-endian. IDs 0x0000-0x3FFF are the inverter's (DTI protocol: packet ID << 8 | node ID); the BMS uses 0xB000 and up, so inverter frames win arbitration.
 
 HV500 setup in the DTI CAN Tool (DTI Inverter CAN Manual v2.4): car bus on the inverter's CAN2 port, CAN2 speed 1 Mbit/s, extended IDs (in standard-ID mode every BMS frame would win arbitration over the inverter), CAN2 map version V24, Send CAN2 Status enabled, Drive enable via CAN2 on (or it ignores the limits). Node ID: `CFG_INVERTER_NODE_ID` = 0xFF (DTI broadcast).
 
-Inverter current limits, every 20 ms: discharge = min(200 A, 80 kW / IVT U1), so it falls above 400 V, and falls linearly to 25 A as the hottest cell goes from 55 to 60 °C. Regen = 35 A (no power limit, EV 2.2.3), falling linearly to 25 A from 45 to 60 °C (the AMS charge trip stays at 35 A). Both 0 A while the AMS is faulted. `BMS_Limits` reports them live, with the discharge power limit (current limit x pack voltage) and the 500 ms average discharge power.
+Inverter current limits every 20 ms: discharge <= 200 A and 80 kW with resistance bounds and thermal derating. Regen <= 35 A only inside the 0..45 C charge window, below cell OV. Invalid/stale cells, temperature or IVT, unapproved profiles, or AMS fault force both limits to zero. The BMS sends electrical limits; the VCU owns propulsion requests.
 
-Moving-window power limiter: **off** (`CFG_POWER_WINDOW_LIMITER_ENABLED`). FS 2027 D 10.4.1 judges power after a 500 ms moving average, so with it on, power may go above 80 kW (up to the current limit) while that average stays at or below it, and after a boost never drops below 72 kW. Any 500 ms still holds at most 40 kJ, so it only moves power earlier: it helps short bursts after lower power (corner exits), not sustained full throttle, and only when the current limit allows more than the power limit (high pack voltage). Power limits become current limits allowing for the pack resistance (0.15-0.6 R, `CFG_PACK_RESISTANCE_*`): the power can't overshoot, but when a boost ends the first lower limit can undershoot the floor by a few kW for one update. Narrow the range once logged runs show the real resistance.
+Power ceiling: 80 kW in both limiter modes. The former credit-spending boost is replaced by the conservative instantaneous ceiling. The 500 ms moving average remains diagnostic; above-ceiling boost is not enabled. Resistance bounds and actuation delay require physical validation. The random floor regression is mandatory.
 
 - Measurement burst every 100 ms (10 Hz): 120 frames, pack, status and summary first, 16-19 ms on the bus.
 - Fast frames every 4 ms (250 Hz): `BMS_Fast_1`, `BMS_Fast_2`. The burst never holds more than one TX buffer, so they wait for at most one frame.

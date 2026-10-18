@@ -11,6 +11,7 @@ The frame layouts here mirror the packing code in bms_libWrapper.c; test/check_d
 simulated firmware's traffic with these files, so a mismatch fails the test suite.
 """
 
+import ast
 import csv
 import io
 import os
@@ -32,36 +33,42 @@ CSV_COLUMNS = ["CAN ID", "ID Type", "Rate (Hz)", "Bit Position", "Bit Length", "
 FLAG_NAMES = {"OPEN_WIRE":"OpenWire","IVT":"IVT","CAN":"CAN","PEC":"PEC","CELL_UV":"CellUV","CELL_OV":"CellOV","CHARGE_TEMP":"ChargeTemperature"}
 
 
-def configuration_text():
+def configuration_text(profile="digital"):
     """Vehicle protocol schema uses the 14-device digital reference profile.
     Hardware profiles remain separate; BENCH advertises its topology at runtime.
     """
-    files=[Path(ROOT)/'Core/Inc/profiles/board_digital.h',Path(ROOT)/'Core/Inc/profiles/bms_mcu_routes.h',Path(ROOT)/'Core/Inc/profiles/bms_board_profile.h']
+    files=[Path(ROOT)/f'Core/Inc/profiles/board_{profile}.h',Path(ROOT)/'Core/Inc/profiles/bms_mcu_routes.h',Path(ROOT)/'Core/Inc/profiles/bms_board_profile.h']
     files+=sorted((Path(ROOT)/'Core/Inc/config').glob('*.h'))
     files+=[Path(CONFIG)]
     return '\n'.join(p.read_text(encoding='utf-8') for p in files)
 
-def macros():
-    text=re.sub(r'/\*.*?\*/','',configuration_text(),flags=re.S).replace('\\\n',' ')
+def macros(profile="digital"):
+    text=re.sub(r'/\*.*?\*/','',configuration_text(profile),flags=re.S).replace('\\\n',' ')
     return {m.group(1):m.group(2).split('//')[0].strip() for m in re.finditer(r'^\s*#define\s+(\w+)\s+([^\n]+)',text,re.M)}
 
-def expand(name):
-    defs=macros();expr=defs[name]
+def expand(name, profile="digital"):
+    defs=macros(profile);expr=defs[name]
     for _ in range(30):
         new=re.sub(r'\b(?:CFG_|BMS_)\w+\b',lambda m:defs.get(m[0],m[0]),expr)
         if new==expr:return expr
         expr=new
     raise ValueError('Recursive configuration '+name)
 
-def read_config(path=CONFIG):
+def read_config(path=CONFIG, profile="digital"):
     values={}
-    for name in macros():
+    for name in macros(profile):
         if not name.startswith('CFG_'):continue
-        expr=expand(name)
-        expr=re.sub(r'(?<=\d)[uUlLfF]+\b','',expr)
-        expr=expr.replace('&&',' and ').replace('||',' or ').replace('/','//')
+        expr=expand(name,profile)
+        expr=re.sub(r'\b(0[xX][0-9a-fA-F]+)[uUlL]*\b|(?<![\w.])((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)[uUlLfF]*\b',lambda m:m[1] or m[2],expr)
+        expr=expr.replace('&&',' and ').replace('||',' or ')
         try:
-            value=eval(expr,{'__builtins__':{}},{})
+            tree=ast.parse(expr,mode='eval')
+            class Division(ast.NodeTransformer):
+                def visit_BinOp(self,node):
+                    self.generic_visit(node)
+                    return ast.copy_location(ast.Call(func=ast.Name(id='cdiv',ctx=ast.Load()),args=[node.left,node.right],keywords=[]),node) if isinstance(node.op,ast.Div) else node
+            tree=ast.fix_missing_locations(Division().visit(tree))
+            value=eval(compile(tree,'<configuration>','eval'),{'__builtins__':{},'cdiv':lambda x,y: int(x/y) if isinstance(x,int) and isinstance(y,int) else x/y},{})
             values[name]=int(value) if isinstance(value,float) and value.is_integer() else value
         except (SyntaxError,NameError,TypeError):pass
     return values

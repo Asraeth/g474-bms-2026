@@ -28,7 +28,11 @@ jobs:
             wrap) flags="--wrap" ;;
           esac
           python tools/run_digital.py $flags
+          python test/check_dbc.py test/build/profile4-$(case "${{ matrix.mode }}" in ubsan) echo ubsan;; pessimistic) echo normal-pessimistic;; wrap) echo normal-wrap;; *) echo normal;; esac)/can_layout.csv
+          python test/check_soc.py test/build/profile4-$(case "${{ matrix.mode }}" in ubsan) echo ubsan;; pessimistic) echo normal-pessimistic;; wrap) echo normal-wrap;; *) echo normal;; esac)/soc_model.csv
           python tools/run_digital.py $flags --variant test/variants/power_window.h boot fast_frames power_window_sustained power_window_bursts power_window_random load_swings limiter_boundaries
+          python tools/check_layout.py --target host
+          python tools/check_profiles.py
           python tools/run_migrated_contracts.py $([ "${{ matrix.mode }}" = ubsan ] && echo --sanitize || true)
       - uses: actions/upload-artifact@v4
         if: always()
@@ -46,6 +50,7 @@ jobs:
           python tools/build_arm.py release --profile 3
           python tools/build_arm.py debug --profile 1
           python tools/build_arm.py release --profile 1
+          python tools/check_layout.py --target arm
       - uses: actions/upload-artifact@v4
         if: always()
         with:

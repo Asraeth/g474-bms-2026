@@ -1,0 +1,707 @@
+{
+  "lead_donor_commit": "75ea736c4108cb34aff9e7fd8996d6ff643494d7",
+  "scope": "All changes from original repository heads, including preserved migration baseline; ignored binaries/logs omitted",
+  "repositories": {
+    "firmware": {
+      "baseline": "919a8a8e3f5cf7461b3a6890139e030517976772",
+      "remote": "https://github.com/Asraeth/g474-bms-2026.git",
+      "published_branch": "integration/bms-final",
+      "file_count": 134,
+      "files": {
+        ".cproject": {
+          "status": "M",
+          "sha256": "ea40379ea455762e7bd2a16bb09f4c52bd574af98425b3c47a5ebd6bb085a894"
+        },
+        ".gitattributes": {
+          "status": "A",
+          "sha256": "01ef9d8145c7268352633aaa13e7d983c268b09818085a6c03cab1594feb61ad"
+        },
+        ".github/workflows/integration.yml": {
+          "status": "A",
+          "sha256": "9325bd12e773aaf311a3533e13ccf35e514348ad5054dd8438e92be78a1cd7bb"
+        },
+        ".gitignore": {
+          "status": "M",
+          "sha256": "7bf8ac682c05280bf422436f1cd888bd28478b5ad045f00099d35b62826ebb3c"
+        },
+        "Core/Inc/bms_can.h": {
+          "status": "M",
+          "sha256": "0c648b408730343e8f8661f05dd5030f6ca0d6278244a676431abbf063f46265"
+        },
+        "Core/Inc/bms_charger.h": {
+          "status": "A",
+          "sha256": "66cfd9ba28af2985a9771e70154ac69c2508fb7b72fc34db4e5d761e003781bd"
+        },
+        "Core/Inc/bms_config.h": {
+          "status": "A",
+          "sha256": "ebf4250d0ddd75ed5e6f1d42fcfb3f32e3779af62d7e761d143178ec6027bcd6"
+        },
+        "Core/Inc/bms_config_local.h.example": {
+          "status": "A",
+          "sha256": "a1a06576b843e59d1ec76c267227efc28c9574783c14e4e229506ff6e292e271"
+        },
+        "Core/Inc/bms_gpio.h": {
+          "status": "A",
+          "sha256": "7e9e95237c22efd24c216dcdff05ac80b69ef328fe5b747ef427c043c87c5e61"
+        },
+        "Core/Inc/bms_health.h": {
+          "status": "A",
+          "sha256": "be05c3ae7d121d992e4f96589bedabe2fbb26e9b093cfe69926b27cd4b551524"
+        },
+        "Core/Inc/bms_inverter.h": {
+          "status": "A",
+          "sha256": "59c2923817bb00dc4d54f5f95e05dcbd32044d929ed83614b81968ec5faa74c0"
+        },
+        "Core/Inc/bms_ivt.h": {
+          "status": "A",
+          "sha256": "e794202602aa2a1e1ef39f6f5580c17cfd5a34674bc4266da975eaeb081fccd1"
+        },
+        "Core/Inc/bms_precharge.h": {
+          "status": "A",
+          "sha256": "75251e27bc5b86cca093eb4c39d89335306ccc5786bfff94af5d3e95b885bf19"
+        },
+        "Core/Inc/bms_safety.h": {
+          "status": "A",
+          "sha256": "ace3215a2d9d056fea00e38a93d3af81bb0d05917fdea49c22b47c01ff28474b"
+        },
+        "Core/Inc/bms_settings.h": {
+          "status": "A",
+          "sha256": "6210d7928a80e9da28af38763147b9dc29f8d3815b5ae38194c7ce6b97d90bb6"
+        },
+        "Core/Inc/bms_soc.h": {
+          "status": "A",
+          "sha256": "bb7fa9b3c70db566ea76fb50da9279d25dd7c3b1cbcff5be4d6ff254d2fe3047"
+        },
+        "Core/Inc/bms_topology.h": {
+          "status": "A",
+          "sha256": "48c9da3fa747c2bf9c529e9262b3a550044ca4e7497c9f66026773060409e020"
+        },
+        "Core/Inc/config/bms_bus_config.h": {
+          "status": "A",
+          "sha256": "8bd084942f611d7a1490e882c7061ba0a6c3cfd171bd284589240d08802dcb21"
+        },
+        "Core/Inc/config/bms_protocol_config.h": {
+          "status": "A",
+          "sha256": "b2ea37f5ee89733a870f3028587ff6e67f7b45dae4a079ff16798fab8b2dc597"
+        },
+        "Core/Inc/config/bms_safety_limits.h": {
+          "status": "A",
+          "sha256": "085559293c1f90a251822f9d423649bf8eb5f0e637dcbd3d2546fcf0e8920fcc"
+        },
+        "Core/Inc/config/bms_sensor_calibration.h": {
+          "status": "A",
+          "sha256": "316738432b03cd172e96841bdaa6ea91f1484a0e787db9c6713419db8acb2ca0"
+        },
+        "Core/Inc/config/bms_sensor_config.h": {
+          "status": "A",
+          "sha256": "0076607b4f2194a023a46a33be9778f8e0bb4267e341a1635017638f83a29f65"
+        },
+        "Core/Inc/config/bms_topology_config.h": {
+          "status": "A",
+          "sha256": "68d4122319af3cd235b9e88a2c391420ede52966971dab4a5c61f653ddd405e8"
+        },
+        "Core/Inc/config/bms_vehicle_config.h": {
+          "status": "A",
+          "sha256": "41df69947ece89a0562f7a31b8b7ad12fcd43e8bde88edaf0422d9dcc900ccb2"
+        },
+        "Core/Inc/fdcan.h": {
+          "status": "M",
+          "sha256": "6040912db1b6c7de55c40ac6b27b0cae6555eac3ea65d18307778dc0795ab15c"
+        },
+        "Core/Inc/main.h": {
+          "status": "M",
+          "sha256": "fe616bb8e1b494be1fc7450d83aa91e286c06d31c92d4fb76c5d77f5cf68c7a5"
+        },
+        "Core/Inc/profiles/bms_board_profile.h": {
+          "status": "A",
+          "sha256": "59b850e44e5c34d7cc4de118be463d527a3b87589c90e6b7fa9bf041039769b3"
+        },
+        "Core/Inc/profiles/bms_mcu_routes.h": {
+          "status": "A",
+          "sha256": "21d1a1ee48c8e2fd7ebcd0eeaacee6a67c36f89e1837bb9fa7a4fb6ba7f82fd4"
+        },
+        "Core/Inc/profiles/board_bench.h": {
+          "status": "A",
+          "sha256": "957e6971d488e22fb2c91f1c382881eea8a1cff8d170f3fab31d62f3b12c955f"
+        },
+        "Core/Inc/profiles/board_digital.h": {
+          "status": "A",
+          "sha256": "436d16fcddd69a3d9d443eb1317f9efef6c0893d0ff310cbc092fe3f5235845b"
+        },
+        "Core/Inc/profiles/board_lead.h": {
+          "status": "A",
+          "sha256": "b664affa763fcfa9043b03b019c503826316b51c89ea8eb29bdfa6163ae4e8a9"
+        },
+        "Core/Inc/profiles/board_v3.h": {
+          "status": "A",
+          "sha256": "75272e6eb895438808a8db9f7743edcefb21f4d0e314f114a7ca9c82f970b8dd"
+        },
+        "Core/Inc/stm32g4xx_it.h": {
+          "status": "M",
+          "sha256": "57d67ebf2e33b4fbf3e9c982d49725934397e55f8c54b7e9f2ba32ec7142184e"
+        },
+        "Core/Inc/uartDMA.h": {
+          "status": "M",
+          "sha256": "91a55b8b8b08e9c50ad1a2f646d942df6f4f86569d4d90fae81e16d8f141e8fb"
+        },
+        "Core/Src/bms_can.c": {
+          "status": "M",
+          "sha256": "cdec876c834ba18a44d1d9fd52dc4a32e803c8ead659edcccafee37fed5c7cab"
+        },
+        "Core/Src/bms_charger.c": {
+          "status": "A",
+          "sha256": "5b9a2c8e2e5132fc9600fb453b486f2ccf35646c5bb949f37d36962bfdfe7084"
+        },
+        "Core/Src/bms_gpio.c": {
+          "status": "A",
+          "sha256": "6df4ad32fab0c29faa17a0690b677ff2c4b8d3fc4e72da63d57075b7e859f6e0"
+        },
+        "Core/Src/bms_health.c": {
+          "status": "A",
+          "sha256": "36c77799a46f8ca126b6da4ba50e8484aadd79051bd9d7de90c47454c0b33bc6"
+        },
+        "Core/Src/bms_inverter.c": {
+          "status": "A",
+          "sha256": "3487bcbaf3a08e85ba65b03f6f29c6a415abc80655d5193588db06087f020e20"
+        },
+        "Core/Src/bms_ivt.c": {
+          "status": "A",
+          "sha256": "19d577284826e575a5cfeb4d55eb84a1f727375761fb549c8903c928a092bf1a"
+        },
+        "Core/Src/bms_precharge.c": {
+          "status": "A",
+          "sha256": "5ab929ab04390fd70ed4005824744f997a6d94e2cda059fc1cd700ef87f4d1bd"
+        },
+        "Core/Src/bms_safety.c": {
+          "status": "A",
+          "sha256": "89fc24f13f53425c9da67ccf22bc593764b40a71ce8d2148a51dd83270c66904"
+        },
+        "Core/Src/bms_settings.c": {
+          "status": "A",
+          "sha256": "0eba36d86148be008c31a3d2b36fb20de2831a8656e3c5f8c8ce2f40061c93fd"
+        },
+        "Core/Src/bms_soc.c": {
+          "status": "A",
+          "sha256": "685ec67df2ac6ae144560931f83378ac8e90def05141e554d0fee8e7c9cada7b"
+        },
+        "Core/Src/fdcan.c": {
+          "status": "M",
+          "sha256": "6515c3042fc72aeac2b9fe4fff6ada75ab363e68778720cceae217411f4fb57e"
+        },
+        "Core/Src/main.c": {
+          "status": "M",
+          "sha256": "2a556f0dd414429ae09ab6fea8b75fb7fdd93bd7271797b9bc1b26c8ce2a098e"
+        },
+        "Core/Src/stm32g4xx_it.c": {
+          "status": "M",
+          "sha256": "c0d3a3105ebb266aae0571c13964860cfbe31095abbd176280062e7f08b8169f"
+        },
+        "Core/Src/tim.c": {
+          "status": "M",
+          "sha256": "ea3428f02bb2edbab3c4633ae58eed409289ea62bdd3eea41e79bdf72db6ea0e"
+        },
+        "Core/Src/uartDMA.c": {
+          "status": "M",
+          "sha256": "58c9719798cf19221aab129e13c3f44aa3b4d32097058ea9a87180732fa51e7a"
+        },
+        "Core/custom_lib/inc/bms_adc.h": {
+          "status": "A",
+          "sha256": "1ff806a7481a4ff17c78b1a8452c0c8f2a7b6a7b0970373908bcf0d6c378e850"
+        },
+        "Core/custom_lib/inc/bms_charger_codec.h": {
+          "status": "A",
+          "sha256": "3adc136396cf1087b0ec818c21583eb696ea0c5ad2bea6937df96f8196462f5f"
+        },
+        "Core/custom_lib/inc/bms_cmdlist.h": {
+          "status": "M",
+          "sha256": "136f4d96801fa134bedb1551ba4342cc7d1bd9007393185712bdaa218f2db3a4"
+        },
+        "Core/custom_lib/inc/bms_command_counter.h": {
+          "status": "A",
+          "sha256": "d3f27a4205c0e8776ab811b9fd880e85d195776018843be14790d515f68d32a3"
+        },
+        "Core/custom_lib/inc/bms_datatypes.h": {
+          "status": "M",
+          "sha256": "0d5a0e3cac7f0cb3f662099c9249deb3754ba15f89a01fa531f761a5ca37bdbc"
+        },
+        "Core/custom_lib/inc/bms_libWrapper.h": {
+          "status": "M",
+          "sha256": "0fb94657a309d7431bf680d34bd7346ce9127db27e058d7b1ab909518bbab288"
+        },
+        "Core/custom_lib/inc/bms_mcuWrapper.h": {
+          "status": "M",
+          "sha256": "257596488474a3b351dc51d61c395f31dd3cc58ce297ef7a9120aa02d71ec589"
+        },
+        "Core/custom_lib/inc/bms_utility.h": {
+          "status": "M",
+          "sha256": "ac38d6ed19f724610d479ff77a37ada4d2e0a6b51339b7df4ef4279094bc241a"
+        },
+        "Core/custom_lib/inc/ivt_s.h": {
+          "status": "A",
+          "sha256": "5e717e715ed874054aa67ce5599fa9d1556c24cf5a87650c5e3845810e6900ac"
+        },
+        "Core/custom_lib/src/bms_charger_codec.c": {
+          "status": "A",
+          "sha256": "cc1aa91328b67c4e78bcec9f3385cd5f6abac8f5bc7b360593ff673b12c25d10"
+        },
+        "Core/custom_lib/src/bms_cmdlist.c": {
+          "status": "M",
+          "sha256": "5fdd5645a36c9e2c4c8503609226e50c07eb7beef2f92a653819fec17526cbdf"
+        },
+        "Core/custom_lib/src/bms_command_counter.c": {
+          "status": "A",
+          "sha256": "f53717d98951ec59ca1913fb510edef359709e1cc20c1f05bdd4be528bd2e948"
+        },
+        "Core/custom_lib/src/bms_libWrapper.c": {
+          "status": "M",
+          "sha256": "160af246b60b36a725aa84b688fadb97776eed8975fc75915670dc6c06aeeaca"
+        },
+        "Core/custom_lib/src/bms_mcuWrapper.c": {
+          "status": "M",
+          "sha256": "b9ae9e904db2b8fd90ffa9fa8abe10196b3bb3d290a20c5ffec7daf775e2aecf"
+        },
+        "Core/custom_lib/src/bms_utility.c": {
+          "status": "M",
+          "sha256": "6f558b43111c63ac5aa2e7e5aa30638cd9381a62fda24c68a9d0ccc525d01365"
+        },
+        "Core/custom_lib/src/ivt_s.c": {
+          "status": "A",
+          "sha256": "eed641f8d0e5f805181cf2e1d59ad7a58b31d6ede4ff630f99a5e7d07df92e4e"
+        },
+        "README.md": {
+          "status": "M",
+          "sha256": "730dc60251d7caac7c8ea50b972081805902101dffeb667e394ffba5f8b82a5f"
+        },
+        "STM32G474RETX_FLASH.ld": {
+          "status": "M",
+          "sha256": "053c9c52fadc921ae4bba2fa5d6053038a21d1411b76eb044ccc8d5894c445a2"
+        },
+        "Supporting Docs/Battery Tracker.xlsx": {
+          "status": "A",
+          "sha256": "8890d843810112097f07dfdb20d4bbb0a87ac316002c95d5ae5529775fad0c06"
+        },
+        "can/bms_can1.dbc": {
+          "status": "A",
+          "sha256": "77425b59b1459847e4a353b445fabcbe588a2a6d0f21b5d3b3f94684694b7f62"
+        },
+        "can/bms_can1_signals.csv": {
+          "status": "A",
+          "sha256": "211062f2e7609906ea9df70e5c04d68cb13c6a317cc01ec7b33dca090b5db853"
+        },
+        "can/bms_model.json": {
+          "status": "A",
+          "sha256": "daf8a5ffdd081d362edfc596fa29235e7884a977a336f8e7fcffcace23fa154e"
+        },
+        "can/bms_model_bench.json": {
+          "status": "A",
+          "sha256": "5a03bd7bc8ed30032de7b6b0c9e88bc2e0ad2631bc252551612d1792e3883859"
+        },
+        "can/charger_can3.dbc": {
+          "status": "A",
+          "sha256": "22adba04e74baf560cef255cfdc5bb9c4ff66d4bf43660a50d846fd2f7fd8c8f"
+        },
+        "can/charger_can3_signals.csv": {
+          "status": "A",
+          "sha256": "e55bfa7e39b12242b7b14b2cfd6b8276c825b069f8a7036e2cd7e30e0423ef71"
+        },
+        "can/ivt_can2.dbc": {
+          "status": "A",
+          "sha256": "1087dbad0f3cb2f9081cc6fdfab84b3bc58492f313bc190301ff23b841ae5708"
+        },
+        "can/ivt_can2_signals.csv": {
+          "status": "A",
+          "sha256": "5a848976c705dffbe0b9172be5b46a3ccb15a9923784d873aa49a076059c5f11"
+        },
+        "can/registry.json": {
+          "status": "A",
+          "sha256": "b7faec22cad0e6f6107c26b50e9765fcc1d1434db3f9fad0fe4648023a7183d2"
+        },
+        "doc/bringup_test_procedure.md": {
+          "status": "A",
+          "sha256": "de568794de8b41884c982b68ca524aa929a929707f466d328923b1c0cd8d92b8"
+        },
+        "doc/bringup_test_procedure.md.in": {
+          "status": "A",
+          "sha256": "cb413d520bd958bfdd4f2f76a1909155d17983741c84dcdaef93ea67ea0e6654"
+        },
+        "docs/TOMORROW-BENCH-BRINGUP.md": {
+          "status": "A",
+          "sha256": "7f623d92eb6566b1f4c405a336b3c4435d6111d8277fc8d197aac150cc2bda33"
+        },
+        "docs/current-bms-integration-audit.md": {
+          "status": "A",
+          "sha256": "1b97788bb28dff68c762275c6d80cf57c5adc3b467105e579568349d71d2acd2"
+        },
+        "docs/gui-firmware-protocol-gap.md": {
+          "status": "A",
+          "sha256": "bef61eb25ead35e432c1ab5d2d69886ebf4c0d270147876db3524c4d541f1e30"
+        },
+        "docs/hardware-validation-pending.md": {
+          "status": "A",
+          "sha256": "0dd26c588f5db104abba417f24cf80b14580469d5c8baf636dd06653669fbcfd"
+        },
+        "docs/integration-changed-files.json": {
+          "status": "A"
+        },
+        "docs/integration-final-report.md": {
+          "status": "A",
+          "sha256": "cb7ac2f47d8a5923c70581d8399ef51887a0db76fa8d4821ef24ebbd6a4bac5a"
+        },
+        "docs/ivt-s-integration.md": {
+          "status": "A",
+          "sha256": "b07c6916487d6ef4f857d9a636541de24b16be1905cfd5070f15a10e7831ee22"
+        },
+        "docs/p1-warning-fixes-verification.md": {
+          "status": "A",
+          "sha256": "496cddc7e8c9b3b84108c294d7f4111bb7e347e0fd4376b24cc7d70f99e9463a"
+        },
+        "docs/protocol-map.md": {
+          "status": "A",
+          "sha256": "d2ef8c274fb85d26232287b03b5102041375ea0540ddb9b75603c33360d7185a"
+        },
+        "docs/safety-comms-bringup.md": {
+          "status": "A",
+          "sha256": "3b07460356f0d777b249e395a40403760b597e69e998c638554f51a13c8bd40b"
+        },
+        "docs/safety-parameter-register.md": {
+          "status": "A",
+          "sha256": "1a725164dfa8ad59eec991ce58e4c976918b9aa24aac72ef107c0763c4a49dba"
+        },
+        "docs/software-readiness-level2.md": {
+          "status": "A",
+          "sha256": "b7bc5ffa37cd79c8e0dbe398dc37269d9945680f7e0baeb2c400dddcf750782b"
+        },
+        "docs/verification-results.json": {
+          "status": "A",
+          "sha256": "7b6a94c6e2556c068aa6bf88f86c2f13d00a0c7442f87b4114cd4e08f17ee764"
+        },
+        "docs/virtual-bms-bench-verification.md": {
+          "status": "A",
+          "sha256": "b5fdd09321226311b033915bd35ee96ca01ba035202a72cfaeed304c6933b02b"
+        },
+        "g474-bms.ioc": {
+          "status": "M",
+          "sha256": "12492e043b1f0692192031f33892bbb997dcb50d034eee493f3e39073ddf2708"
+        },
+        "test/bench/ivt_bus_stress.py": {
+          "status": "A",
+          "sha256": "f37844ee3cc5ba9b5c53e59efafac238be47bdef6364cf086959ba086433f11b"
+        },
+        "test/check_dbc.py": {
+          "status": "A",
+          "sha256": "fb4ee77b1effe37f7d1c6eb19cead291ee532af268161bd3fd82fcf78549db2f"
+        },
+        "test/check_layout.sh": {
+          "status": "A",
+          "sha256": "c5da5c943d53f7e0f8adcdffb45eef01341dc1f1a4d48a5fce199b0412f7c3e0"
+        },
+        "test/check_soc.py": {
+          "status": "A",
+          "sha256": "07f3a95424fd4fc6261af64cb9628c87655ee15ea5c3e33604fbb6439e8b0d0d"
+        },
+        "test/include/cmsis_sim.h": {
+          "status": "A",
+          "sha256": "8ffaee18ed7cc682cd7f28ce796d736d636e9b2c919dbc32cc116481cba0013f"
+        },
+        "test/include/stm32g4xx_hal_conf.h": {
+          "status": "A",
+          "sha256": "50d4106086df7429f45f9714f5127a51103a653b26300a4efd229d97cb7e1419"
+        },
+        "test/integration_cases.h": {
+          "status": "A",
+          "sha256": "fb7fbac6a4fea7d195535fae8c4b6b9896a366806cb9bfa156505fb4e56fcc2a"
+        },
+        "test/layout_probe.c": {
+          "status": "A",
+          "sha256": "cdbf48e2b890112c784917f22541444bb8ec76320eccf7f0047dff9b4e8d714d"
+        },
+        "test/migrated_transport.c": {
+          "status": "A",
+          "sha256": "80461a70694d02d4e311ac1f09f0c94018153e1beaf9217c96c36cb0936cd2be"
+        },
+        "test/run_tests.sh": {
+          "status": "A",
+          "sha256": "bc01111e3b0ed6057b521f50bc065a32c49bb92250d74b9b5bdccb23b54411e9"
+        },
+        "test/sim/sim.h": {
+          "status": "A",
+          "sha256": "9aac9796e5baed5ba09cbec58fd7139cb61848b8b44b2b9913df1d4e49483561"
+        },
+        "test/sim/sim_adbms.c": {
+          "status": "A",
+          "sha256": "29ecdc737b24aaff750357ca2e6c16354cdbef9cee2f0b71f3692bf297505b54"
+        },
+        "test/sim/sim_can.c": {
+          "status": "A",
+          "sha256": "a87c4916afdee02ae8b102cb4864d1c9ba1c751b7fa2ffec1f4d6296189acb07"
+        },
+        "test/sim/sim_core.c": {
+          "status": "A",
+          "sha256": "525e224d4c363f0554c429a911a73ef5ee0f792954c5381ba0a84f68e3b7f256"
+        },
+        "test/sim/sim_flash.c": {
+          "status": "A",
+          "sha256": "5b2b6f591b48a16f427cae7c8f65b7467b950b4248e4a82aea1c6878edfa4f1c"
+        },
+        "test/sim/sim_ivt.c": {
+          "status": "A",
+          "sha256": "bfc4de48209879536d24b4a92478ed604e4ad8d992817178d61fe39dd0c550e7"
+        },
+        "test/tests.c": {
+          "status": "A",
+          "sha256": "48d6a7acad9b47df9479225011eca5884e0415324bf5927d858a32bbf3b0d19f"
+        },
+        "test/variants/bench_eval.h": {
+          "status": "A",
+          "sha256": "3749cf966519123fa63d1b66bdd57c188e5084e0a9c60620e1dda98fd41eddcc"
+        },
+        "test/variants/power_window.h": {
+          "status": "A",
+          "sha256": "cd7bba9e1dfca8ed65497cde4e71d3207bd52b8ecdaf31d4d9edf3e21376b515"
+        },
+        "tests/adbms_counter_test.c": {
+          "status": "A",
+          "sha256": "21b2fcdeba15ee657e25ae56d95e59a2e919e77ece87ab046243f3c7cd1d6633"
+        },
+        "tests/adbms_transport_test.c": {
+          "status": "A",
+          "sha256": "f1efc0cd294a18045190ad35fd422967c75dfdef1f1d6167b8d026382813aa8a"
+        },
+        "tests/bms_p1_regression.c": {
+          "status": "A",
+          "sha256": "908eacbbe7f90447f1d12d9e020dc60bb164b1143e81de4d0f656ccda41b66f9"
+        },
+        "tests/bms_pack_test.c": {
+          "status": "A",
+          "sha256": "f321b2dcdd2ea5656b635118fb546eb5025dbb0728a302bf565e6c089bcf8501"
+        },
+        "tests/ivt_s_test.c": {
+          "status": "A",
+          "sha256": "da1feb3d38a8d4349d707a5c710b28aa9ff5bccd283dcba4e82fadfa75d65692"
+        },
+        "tests/legacy/bms_safety_config.h": {
+          "status": "A",
+          "sha256": "7fc02c1675e18dc2bc9998c894a658a73b689d831edf871bbe24b3bdf7202f65"
+        },
+        "tests/run_host_tests.py": {
+          "status": "A",
+          "sha256": "9b7d91bc779d3652e7abd333a974a3a5e9ff2c2f68cf5d213e30bfded8424e16"
+        },
+        "tests/run_p1_regression.py": {
+          "status": "A",
+          "sha256": "81e73fab009e7e4a453005f8fb92d1b70b61bd30c23f7ca6dcdfece6bc1a426b"
+        },
+        "tests/run_virtual_bench.py": {
+          "status": "A",
+          "sha256": "1bae4b77808ad96cda7f265c385c4e5e7e97e7c9dfd5cbf926d626a2b8509b95"
+        },
+        "tests/virtual_bms_bench.c": {
+          "status": "A",
+          "sha256": "cf86a18dfd7bf81d3202bbf47f85972760e9702cc4e9edb0fda502aee7c9b35d"
+        },
+        "tools/build_arm.py": {
+          "status": "A",
+          "sha256": "8c2ef398fbec25032320c575578effdc4f3927a2ab8e1757bf170fbb1a0e565b"
+        },
+        "tools/build_arm.sh": {
+          "status": "A",
+          "sha256": "5fccf412994214684fbeff4efbe897780299687a367ad5884c8775e45862777a"
+        },
+        "tools/check_layout.py": {
+          "status": "A",
+          "sha256": "fb0e8e7dccfe27f99e74d8df98b638f09c7e6d332654a8d2f7f6dca16c88c79b"
+        },
+        "tools/check_profiles.py": {
+          "status": "A",
+          "sha256": "e1c16b42285d65e0c840c84708b740f0e64a0bb1d59c3e7b442c64b178a26a72"
+        },
+        "tools/export_gui_fixtures.py": {
+          "status": "A",
+          "sha256": "87279365d2ef39762a449211d81e1a5255503475636777e0e3ef3198283f5de6"
+        },
+        "tools/gen_dbc.py": {
+          "status": "A",
+          "sha256": "449d301547352218a4cc4511ada586df57ecd37303c2fabce26928357543d436"
+        },
+        "tools/generate.py": {
+          "status": "A",
+          "sha256": "b2a2493965f9e13f6e92bbea5cdc54881d46191b6a96472bca0bf304b9fba840"
+        },
+        "tools/githooks/pre-commit": {
+          "status": "A",
+          "sha256": "af968724363328881042c3419c312e18ddd9127ad50b8778ec5b93032434bdad"
+        },
+        "tools/run_digital.py": {
+          "status": "A",
+          "sha256": "cb3b872b0233697b04647e2825b4072974b0711e3987439c1106be6ed0b58292"
+        },
+        "tools/run_migrated_contracts.py": {
+          "status": "A",
+          "sha256": "8cd6e354edcc273f922b0f9b0cd2a774ad298a9dd93ffdf473f57a3a730417dc"
+        },
+        "tools/sync_gui_protocol.py": {
+          "status": "A",
+          "sha256": "4fd52b97899130c2ca51af47ad54fb243bf015eddcd30ac18306694532d6893a"
+        }
+      }
+    },
+    "gui": {
+      "baseline": "dbb91c662bbedbecc0cd9a0e2aecd6da63d386be",
+      "remote": "https://github.com/Asraeth/bms-gui-2026.git",
+      "published_branch": "integration/bms-final",
+      "file_count": 38,
+      "files": {
+        ".gitattributes": {
+          "status": "A",
+          "sha256": "78b88d73f1bd56bcbf5647e62bc1b01a676891b340b4729d0e2dddf87cfc0685"
+        },
+        ".gitignore": {
+          "status": "M",
+          "sha256": "0f56340fd948c78a24a29a2d45bd9b32583f40a8b1555ee73f1dec24c5e549c4"
+        },
+        "README.md": {
+          "status": "M",
+          "sha256": "cd856494aa83c0db56c9d84533334fa9a55868ad9239ab49e1ee01e6a95284c1"
+        },
+        "bms_can_database.dbc": {
+          "status": "D"
+        },
+        "bms_gui.py": {
+          "status": "A",
+          "sha256": "4300145d52b6a1a307a1025c33d4ceacbc38570f861e0e402f37c05c6253125c"
+        },
+        "bms_model.json": {
+          "status": "A",
+          "sha256": "daf8a5ffdd081d362edfc596fa29235e7884a977a336f8e7fcffcace23fa154e"
+        },
+        "bms_model_bench.json": {
+          "status": "A",
+          "sha256": "5a03bd7bc8ed30032de7b6b0c9e88bc2e0ad2631bc252551612d1792e3883859"
+        },
+        "bmslib/__init__.py": {
+          "status": "A",
+          "sha256": "ec8314e93f90538802bf83aa2ad5137556eb4e149dcb52b47c7af6d068649654"
+        },
+        "bmslib/demo.py": {
+          "status": "A",
+          "sha256": "2f6af4ced42b678f5b56903703216df9a5adebbf28c1665d454a9342a371d0df"
+        },
+        "bmslib/link.py": {
+          "status": "A",
+          "sha256": "c2463793ca97dfcd8434e9ef8f1d7b5afabde036ae5fe6493e7344f889c445fe"
+        },
+        "bmslib/model.py": {
+          "status": "A",
+          "sha256": "f8224aca97b837ae08e71d84f94e7e3aab74efa6b678c1d31a11ada736f37c97"
+        },
+        "bmslib/settings.py": {
+          "status": "A",
+          "sha256": "de682ece0163c69983c08e271f71e7adbe49c9b5aeb3af4325d7efbe561f5812"
+        },
+        "bmslib/soc.py": {
+          "status": "A",
+          "sha256": "77480bc89623ae6afd21ff562825e0b762dd89b9ffe35b12bc7b31a55bfc7d05"
+        },
+        "bmslib/store.py": {
+          "status": "A",
+          "sha256": "5eec501ab55fb8772b85401cd9e8f4865478c77d4f72f7b200c2897bb0641bab"
+        },
+        "bmslib/theme.py": {
+          "status": "A",
+          "sha256": "6f09cc69d38b164c3c8e7ad7908840626f77b01b527e000e5447c9a595e1887a"
+        },
+        "bmslib/widgets.py": {
+          "status": "A",
+          "sha256": "c56ed76102cd520675839578efc016f4732465f63653f0551fd6d3479b42587a"
+        },
+        "can-test.py": {
+          "status": "M",
+          "sha256": "adaaa3bc686bfd8e4a7c2e316688c29433e0dd94782212bd6f54774e1d30763f"
+        },
+        "databases/bms_can_database.dbc": {
+          "status": "D"
+        },
+        "databases/db-maker.py": {
+          "status": "M",
+          "sha256": "d77c2bdcc8160e1d30d5d8f9fe0f41ae84af03c2ec686216733f5bc9cde4e453"
+        },
+        "db-test.py": {
+          "status": "M",
+          "sha256": "807d6bf48f6117dc5d218ab82c787f931bf44f193979cc2c8f039a219203fd5e"
+        },
+        "hv500_can2_map_v24_EID_custom.dbc": {
+          "status": "A",
+          "sha256": "6a338ed9e4f61f29a9ee9fcf7faca4c3b3fd66a12fbcbfd3696d7a2c0049213a"
+        },
+        "log-reader.py": {
+          "status": "M",
+          "sha256": "fadfdd3d662061d1bd9104772f65f513e7fbdc46a12f2d30f68f3f8511bba78d"
+        },
+        "log_lines_filter.py": {
+          "status": "M",
+          "sha256": "480d5814cf5c5552b0027e011e9157a5d0d3faa646c90d2c1cac2902ba13af92"
+        },
+        "main.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "main2.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "main3.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "main4.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "main5.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "main6.py": {
+          "status": "M",
+          "sha256": "c796cc0f537c5312326de0abe4e53149de9dd789b0fb68143075e37a1a79b329"
+        },
+        "protocol/bms_can1.dbc": {
+          "status": "A",
+          "sha256": "77425b59b1459847e4a353b445fabcbe588a2a6d0f21b5d3b3f94684694b7f62"
+        },
+        "protocol/charger_can3.dbc": {
+          "status": "A",
+          "sha256": "22adba04e74baf560cef255cfdc5bb9c4ff66d4bf43660a50d846fd2f7fd8c8f"
+        },
+        "protocol/firmware_trace.csv": {
+          "status": "A",
+          "sha256": "5c84f28062333840cf9b767b004686a110ddadabf7708a25b323d0c9db4c75fd"
+        },
+        "protocol/ivt_can2.dbc": {
+          "status": "A",
+          "sha256": "1087dbad0f3cb2f9081cc6fdfab84b3bc58492f313bc190301ff23b841ae5708"
+        },
+        "protocol/registry.json": {
+          "status": "A",
+          "sha256": "b7faec22cad0e6f6107c26b50e9765fcc1d1434db3f9fad0fe4648023a7183d2"
+        },
+        "protocol/soc_model.csv": {
+          "status": "A",
+          "sha256": "66bf1c6736e2d5c45801a3390f2bad5ce8e397a7208f9867d7070b31b84d7e90"
+        },
+        "requirements.txt": {
+          "status": "M",
+          "sha256": "aad527d659520144a66985036c0540c87917888e70470be8339d525a53cbfb82"
+        },
+        "tests/test_gui.py": {
+          "status": "A",
+          "sha256": "69bc7492234e9b39d18fc1c43a9b75752e29a2fed9ffaac0dc3160a61824c6ae"
+        },
+        "tests/test_protocol_integration.py": {
+          "status": "A",
+          "sha256": "90b710c20efc358c8d4ba93b9dd6858f786d8b3deba4146c4c56317cb23d51f3"
+        }
+      }
+    }
+  }
+}

@@ -472,6 +472,9 @@ static void command_received(uint64_t now)
 static void apply_write(void)
 {
     cmd_kind kind = decode(cmd_code);
+    /* An injected HAL timeout after the write opcode can leave no payload.
+     * Real devices discard incomplete data/PEC without changing registers/CC. */
+    if(spi_error && wr_len==0) {lost_transactions++;return;}
     for (int i = 0; i < reachable; i++)
     {
         int offset = (num_dev - 1 - i) * 8;     // First block sent is for the last device

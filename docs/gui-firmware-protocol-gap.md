@@ -1,5 +1,7 @@
 # GUI / firmware protocol gap
 
+> Baseline audit retained as the authoritative integration input. Implementation and reconciliation results are now in [integration-final-report.md](integration-final-report.md) and [protocol-map.md](protocol-map.md). The classifications below describe the pre-integration repositories.
+
 Inspection date: 18 October 2026. **Documentation only; no production code, DBC or Git-history changes.**
 
 This retains the originally requested migration-versus-GUI field comparison and incorporates the subsequently identified lead source. The final subsystem decisions, hardware conflicts, board profiles and implementation order are in [final-integration-plan.md][final-plan].

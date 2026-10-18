@@ -1,8 +1,6 @@
-/*
- * Configuration variant for test/run_tests.sh: the bench profile for EVAL-ADBMS6830BMSW boards.
- * Tests that need more than one slave (balancing between slaves, LEDs on slave 3), run for 10 minutes, or
- * drive the car's pack at 80 kW (an 8-cell pack would need thousands of amps) are left out.
+/* EVAL single-board verification uses the explicit BENCH profile:
+ * python tools/run_digital.py --profile 3 bench_contract
+ * The full vehicle suite always runs with the 14-board digital profile.
+ * No safety scenario is excluded from that suite.
  */
-// tests: all except balancing leds soak_1 soak_2 soak_3 power_window_sustained power_window_bursts power_window_random load_swings
-
-#include "bms_config_local.h.example"
+#error "Select BMS_BOARD_PROFILE=3 with --profile 3; do not override vehicle topology piecemeal"

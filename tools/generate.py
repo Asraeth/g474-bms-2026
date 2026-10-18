@@ -23,6 +23,7 @@ clone: git config core.hooksPath tools/githooks) and every test/run_tests.sh. On
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -44,6 +45,8 @@ TIM_C = "Core/Src/tim.c"
 # Watched by --watch (README.md is an output too, so it isn't watched)
 SOURCES = ["Core/Inc/bms_config.h", "Core/Inc/bms_can.h", "Core/Inc/main.h", DOC_TEMPLATE, IOC, FDCAN_C, TIM_C,
            "tools/gen_dbc.py", "tools/generate.py"]
+
+SOURCES += [str(p.relative_to(ROOT)).replace("\\","/") for folder in ("Core/Inc/config","Core/Inc/profiles") for p in Path(ROOT,folder).glob("*.h")]
 
 FRAME_BITS_NOMINAL = 131        # Extended 8-byte frame without stuff bits, including the interframe space
 
@@ -376,29 +379,17 @@ def readme_can(cfg, d):
         f"ignores the limits). Node ID: `CFG_INVERTER_NODE_ID` = 0x{cfg['CFG_INVERTER_NODE_ID']:02X}"
         f"{' (DTI broadcast)' if cfg['CFG_INVERTER_NODE_ID'] == 0xFF else ''}.",
         "",
-        f"Inverter current limits, every {cfg['CFG_INVERTER_LIMIT_PERIOD_MS']} ms: discharge = min("
-        f"{cfg['CFG_MAX_DISCHARGE_CURRENT_A']:g} A, {cfg['CFG_INVERTER_POWER_LIMIT_W'] / 1000:g} kW / IVT U1), so it "
-        f"falls above {cfg['CFG_INVERTER_POWER_LIMIT_W'] / cfg['CFG_MAX_DISCHARGE_CURRENT_A']:g} V, and falls linearly "
-        f"to {cfg['CFG_INVERTER_DERATE_CURRENT_A']:g} A as the hottest cell goes from "
-        f"{cfg['CFG_INVERTER_DERATE_START_C']:g} to {cfg['CFG_INVERTER_DERATE_END_C']:g} °C. Regen = "
-        f"{cfg['CFG_INVERTER_REGEN_CURRENT_A']:g} A (no power limit, EV 2.2.3), falling linearly to "
-        f"{cfg['CFG_INVERTER_REGEN_DERATE_CURRENT_A']:g} A from {cfg['CFG_INVERTER_REGEN_DERATE_START_C']:g} to "
-        f"{cfg['CFG_INVERTER_REGEN_DERATE_END_C']:g} °C (the AMS charge trip stays at "
-        f"{cfg['CFG_MAX_CHARGE_CURRENT_A']:g} A). Both 0 A while the AMS is faulted. `BMS_Limits` reports them live, "
-        "with the discharge power limit (current limit x pack voltage) and the 500 ms average discharge power.",
+        f"Inverter current limits every {cfg['CFG_INVERTER_LIMIT_PERIOD_MS']} ms: discharge <= "
+        f"{cfg['CFG_MAX_DISCHARGE_CURRENT_A']:g} A and {cfg['CFG_INVERTER_POWER_LIMIT_W']/1000:g} kW with resistance bounds and thermal derating. "
+        f"Regen <= {cfg['CFG_INVERTER_REGEN_CURRENT_A']:g} A only inside the "
+        f"{cfg['CFG_CELL_CHARGE_TEMP_MIN_C']:g}..{cfg['CFG_CELL_CHARGE_TEMP_MAX_C']:g} C charge window, below cell OV. "
+        "Invalid/stale cells, temperature or IVT, unapproved profiles, or AMS fault force both limits to zero. "
+        "The BMS sends electrical limits; the VCU owns propulsion requests.",
         "",
-        f"Moving-window power limiter: **{'on' if cfg['CFG_POWER_WINDOW_LIMITER_ENABLED'] else 'off'}** "
-        "(`CFG_POWER_WINDOW_LIMITER_ENABLED`). FS 2027 D 10.4.1 judges power after a "
-        f"{cfg['CFG_POWER_WINDOW_MS']} ms moving average, so with it on, power may go above "
-        f"{cfg['CFG_POWER_WINDOW_LIMIT_W'] / 1000:g} kW (up to the current limit) while that average stays at or below "
-        f"it, and after a boost never drops below {cfg['CFG_POWER_WINDOW_FLOOR_W'] / 1000:g} kW. Any "
-        f"{cfg['CFG_POWER_WINDOW_MS']} ms still holds at most {cfg['CFG_POWER_WINDOW_LIMIT_W'] * cfg['CFG_POWER_WINDOW_MS'] / 1e6:g} kJ, "
-        "so it only moves power earlier: it helps short bursts after lower power (corner exits), not sustained "
-        "full throttle, and only when the current limit allows more than the power limit (high pack voltage). "
-        "Power limits become current limits allowing for the pack resistance "
-        f"({cfg['CFG_PACK_RESISTANCE_MIN_OHM']:g}-{cfg['CFG_PACK_RESISTANCE_MAX_OHM']:g} R, `CFG_PACK_RESISTANCE_*`): "
-        "the power can't overshoot, but when a boost ends the first lower limit can undershoot the floor by a few kW "
-        "for one update. Narrow the range once logged runs show the real resistance.",
+        f"Power ceiling: {cfg['CFG_INVERTER_POWER_LIMIT_W']/1000:g} kW in both limiter modes. "
+        "The former credit-spending boost is replaced by the conservative instantaneous ceiling. "
+        f"The {cfg['CFG_POWER_WINDOW_MS']} ms moving average remains diagnostic; above-ceiling boost is not enabled. "
+        "Resistance bounds and actuation delay require physical validation. The random floor regression is mandatory.",
         "",
         f"- Measurement burst every {cfg['CFG_CAN_TX_PERIOD_MS']} ms ({burst}): {d['burst_frames']} frames, pack, "
         f"status and summary first, {d['burst_ms_min']:.0f}-{d['burst_ms_max']:.0f} ms on the bus.",
@@ -618,6 +609,7 @@ def build_outputs():
         DOC: header + render(read_text(DOC_TEMPLATE), namespace, DOC_TEMPLATE),
         README: replace_blocks(read_text(README), {"can": readme_can(cfg, d), "pins": readme_pins(cfg, d)}, README),
         GUI_MODEL: gui_model(cfg),
+        "can/bms_model_bench.json": gui_model(read_config(CONFIG,profile="bench")),
     }
     registry=[]
     for bus,db in [('TSCAN',can1),('TSACCAN',can2),('CHRGCAN',can3)]:

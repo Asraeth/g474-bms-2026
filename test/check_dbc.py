@@ -22,9 +22,7 @@ failures = []
 
 def cfg_pack_energy(cfg):
     # CFG_PACK_ENERGY_WH is a float expression; recompute it from the parsed values
-    text = open(CONFIG, encoding="utf-8").read()
-    cell = float(re.search(r"#define\s+CFG_CELL_ENERGY_WH\s+([0-9.]+)f?", text).group(1))
-    return cell * cfg["CFG_NUM_SLAVES"] * cfg["CFG_CELLS_PER_SLAVE"]
+    return cfg["CFG_CELL_ENERGY_WH"] * cfg["CFG_NUM_SLAVES"] * cfg["CFG_CELLS_PER_SLAVE"]
 
 
 def check(condition, message):
@@ -172,12 +170,21 @@ def main():
     # Charger command on CAN3
     charger_frames = [f for f in frames if f["bus"] == 3 and f["from_mcu"]]
     check(len(charger_frames) > 0, "no charger frames on CAN3")
-    charger = {}
-    if charger_frames:
-        charger = can3.get_message_by_frame_id(charger_frames[-1]["id"] | 0x80000000).decode(charger_frames[-1]["data"])
-    target_v = next(s for s in settings if s["name"] == "Charge_Voltage")["default"] / 10
-    check(close(charger.get("Charger_Target_Voltage", 0), target_v, 0.05) and charger.get("Charger_Disable") == 1,
-          f"charger command {charger}, expected {target_v} V (the built-in setting)")
+    # Current charger gateway: separate six-digit BCD setpoint and fault heartbeat.
+    targets=[f for f in charger_frames if f['id']==0x00FFFFFF]
+    faults=[f for f in charger_frames if f['id']==0x001FFFFF]
+    check(bool(targets) and bool(faults),'missing charger setpoint or fault heartbeat')
+    def bcd(data):
+        digits=[n for byte in data for n in (byte>>4,byte&15)]
+        check(all(n<=9 for n in digits),'non-decimal charger BCD digit')
+        return sum(n*10**(len(digits)-i-1) for i,n in enumerate(digits))
+    if targets:
+        data=targets[-1]['data']
+        target_v=next(s for s in settings if s['name']=='Charge_Voltage')['default']/10
+        check(close(bcd(data[:3])/1000,target_v,0.001),'charger BCD voltage mismatch')
+        check(close(bcd(data[3:6])/100000,0,0.00001),'charger BCD current mismatch')
+        check(data[6:]==bytes(2),'charger setpoint reserved bytes')
+    if faults:check(faults[-1]['data']==bytes.fromhex('AA00000000000000'),'charger must be inhibited without deliberate enable')
 
     # Settings: the can_layout test reads all settings, then writes a power limit above the built-in one
     request_msg = can1.get_message_by_name("BMS_Config_Request")

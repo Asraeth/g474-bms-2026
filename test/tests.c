@@ -524,7 +524,7 @@ static void test_boot_u1_disabled(void)
 static void ev_layout_read_settings(void* arg)
 {
     (void)arg;
-    uint8_t d[8] = { 5, 0, 0, 0, 0, 0, 0, 0 };
+    uint8_t d[8] = { 5, 0, CFG_CONFIG_VERSION, 1, 0, 0, 0, 0 };
     sim_can_node_send(1, CFG_CAN_ID_CONFIG_REQUEST, true, d, 8);
 }
 
@@ -532,7 +532,7 @@ static void ev_layout_bad_setting(void* arg)
 {
     (void)arg;
     int32_t v = (int32_t)lroundf(CFG_INVERTER_POWER_LIMIT_W) + 1;
-    uint8_t d[8] = { 2, 1, 0, 0, (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
+    uint8_t d[8] = { 2, 1, CFG_CONFIG_VERSION, 2, (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
     sim_can_node_send(1, CFG_CAN_ID_CONFIG_REQUEST, true, d, 8);
 }
 
@@ -2584,7 +2584,7 @@ static void expect_state(PrechargeState state, bool pre, bool byp, const char* w
 static void ev_pc_charging(void* arg) { (void)arg; expect_state(PRECHARGE_CHARGING, true, false, "precharging"); }
 static void ev_pc_active(void* arg)   { (void)arg; expect_state(PRECHARGE_ACTIVE, false, true, "TS active"); }
 static void ev_pc_idle(void* arg)     { (void)arg; expect_state(PRECHARGE_IDLE, false, false, "idle"); }
-static void ev_pc_failed(void* arg)   { (void)arg; expect_state(PRECHARGE_FAILED, false, false, "failed"); }
+static void ev_pc_failed(void* arg)   { (void)arg; expect_state(PRECHARGE_FAILED, false, false, "failed"); SIM_CHECK(BMS_Safety_GetActiveFlags() & BMS_ERR_PRECHARGE, "precharge failure absent from coherent fault flow"); }
 
 static void test_precharge_nominal(void)
 {
@@ -2621,9 +2621,9 @@ static void test_precharge_timeout_retry(void)
     sim_schedule(SIM_S(10.0), ev_ts_on, NULL);                  // Still "activate": must not restart
     sim_schedule(SIM_S(11.0), ev_pc_failed, NULL);
     sim_schedule(SIM_S(12.0), ev_ts_off, NULL);
-    sim_schedule(SIM_S(12.5), ev_ts_on, NULL);                  // New request
-    sim_schedule(SIM_S(14.5), ev_pc_active, NULL);
-    sim_run_firmware(SIM_S(15));
+    sim_schedule(SIM_S(13.2), ev_ts_on, NULL);                  // New request
+    sim_schedule(SIM_S(15.5), ev_pc_active, NULL);
+    sim_run_firmware(SIM_S(16));
     common_checks(true);
     SIM_CHECK(bypass_closures == 1, "bypass closed %d times", bypass_closures);
 }
@@ -2807,6 +2807,7 @@ static void test_ivt_value_extremes(void)
     sim_schedule(SIM_S(4.0), ev_ivt_off, NULL);
     sim_schedule(SIM_S(4.0), ev_ivt_extremes, NULL);
     sim_schedule(SIM_S(5.0), ev_ivt_back, NULL);
+    sim_schedule(SIM_S(5.1), ev_ts_off, NULL); // explicit reset of failed precharge
     sim_run_firmware(SIM_S(9));
     common_checks(true);
     uint64_t trip = first_fault_after(SIM_S(4.0));
@@ -3522,6 +3523,8 @@ static const fault_case* active_fault = NULL;
 static uint64_t     soak_end = 0;
 static uint64_t     soak_worst = 0;
 static int          soak_transients = 0;
+static uint64_t precharge_hazards[MAX_WINDOWS];
+static int precharge_hazard_count;
 
 // Healthy drift avoids the cells and sensors the fault cases use
 static const int drift_slaves[] = { 0, 1, 2, 4, 6, 8, 10, 13 };
@@ -3601,6 +3604,7 @@ static void ev_soak_transient(void* arg)
     default:
         if (!current_fault_active())
         {
+            if (precharge_hazard_count<MAX_WINDOWS) precharge_hazards[precharge_hazard_count++]=sim_now_us();
             sim_ivt_set_status(0x8);
             sim_schedule(sim_now_us() + 25000, ev_status_clear, NULL);
         }
@@ -3618,6 +3622,7 @@ static void ev_soak_vcu(void* arg)
 {
     (void)arg;
     PrechargeState st = BMS_Precharge_GetState();
+    if (st == PRECHARGE_FAILED) send_ts(false); /* deliberate reset, never a held activate */
     if ((st == PRECHARGE_IDLE || st == PRECHARGE_FAILED) && !sim_fault_active())
     {
         send_ts(false);
@@ -3628,7 +3633,7 @@ static void ev_soak_vcu(void* arg)
     {
         send_ts(false);
     }
-    if (sim_now_us() < soak_end) sim_schedule(sim_now_us() + rnd_us(1.0, 6.0), ev_soak_vcu, NULL);
+    if (sim_now_us() < soak_end) sim_schedule(sim_now_us() + rnd_us(0.25, 1.0), ev_soak_vcu, NULL);
 }
 
 static void ev_soak_fault_check(void* arg)
@@ -3697,6 +3702,11 @@ static void run_soak(uint32_t seed, double seconds)
             uint64_t end = windows[k].end == UINT64_MAX ? soak_end : windows[k].end;
             explained = list[i].t_us >= windows[k].start && list[i].t_us <= end + 700000;
         }
+        /* A transient global IVT error while the TS is active now requires an
+         * explicit precharge abort/reset, independently of the IVT AMS debounce.
+         * Only its bounded detection interval explains this additional assertion. */
+        for(int h=0;h<precharge_hazard_count && !explained;h++)
+            explained=list[i].t_us>=precharge_hazards[h] && list[i].t_us<=precharge_hazards[h]+100000;
         if (!explained)
         {
             unexplained++;
