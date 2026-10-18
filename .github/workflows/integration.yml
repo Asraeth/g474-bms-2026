@@ -70,7 +70,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install Qt offscreen system libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
       - run: pip install -r gui-fork/requirements.txt openpyxl
+      - run: python -c "from PySide6.QtWidgets import QApplication; import pyqtgraph"
       - run: python tools/generate.py --check
       - run: python tools/sync_gui_protocol.py gui-fork --check
       - run: QT_QPA_PLATFORM=offscreen python -m unittest discover -s gui-fork/tests -v

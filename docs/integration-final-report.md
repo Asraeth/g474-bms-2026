@@ -63,7 +63,7 @@ Simulator corrections preserve monotonic time when a callback consumes time and 
 
 ## Verification evidence
 
-Final machine-readable results and build logs are under ignored `test/build/` and `build/`. [Verification results](verification-results.json) records final totals. All final gates below passed. Windows Application Control rejected the full native simulator (4551); the same production sources are tested using the existing Ubuntu WSL GCC toolchain. No application-control policy was changed. ARM builds use installed STM32 GCC with `-Wall -Werror` and additional production warnings.
+Final machine-readable results and build logs are under ignored `test/build/` and `build/`. [Verification results](verification-results.json) records final totals. All local gates below passed. Independent fork CI additionally runs the same checks; its Linux Qt job explicitly installs EGL/OpenGL runtime libraries so missing GUI dependencies cannot be mistaken for skipped passing tests. Windows Application Control rejected the full native simulator (4551); the same production sources are tested using the existing Ubuntu WSL GCC toolchain. No application-control policy was changed. ARM builds use installed STM32 GCC with `-Wall -Werror` and additional production warnings.
 
 Required checks: all digital scenarios in normal/UBSan/pessimistic/tick-wrap modes; mandatory power-window variant; independent migrated IVT/counter/transport contracts normal and UBSan; BENCH contract; ARM Debug/Release for BENCH and lead profiles; ARM/host register layout; strict DBC actual-traffic decoding; spreadsheet SoC comparison; generation/synchronization; GUI synthetic/virtual/production-trace tests.
 
